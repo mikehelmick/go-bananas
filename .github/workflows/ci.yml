@@ -32,8 +32,7 @@ jobs:
         run: go mod download
 
       - name: go-test
-        shell: bash
-        env:
+        shell: bash        
         run: make test-acc
 
       - name: go-coverage
