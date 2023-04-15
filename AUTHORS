@@ -1,0 +1,14 @@
+# This is the list of go-bananas significant contributors.
+#
+# This does not necessarily list everyone who has contributed code,
+# especially since many employees of one corporation may be contributing.
+# To see the full list of contributors, see the revision history in
+# source control.
+
+mikehelmick
+
+# Significant pieces of go-bananas are extracted from the 
+# Exposure Notifications Verification Server
+# https://github.com/google/exposure-notifications-verification-server
+
+Google LLC
