@@ -12,5 +12,4 @@ func TestAdd(t *testing.T) {
 	if c != 3 {
 		t.Fatalf("got the wrong answer...")
 	}
-
 }
