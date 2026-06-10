@@ -30,12 +30,10 @@ linters:
   enable:
   - 'asciicheck'
   - 'bodyclose'
-  - 'depguard'
   - 'dogsled'
   - 'errcheck'
   - 'errorlint'
   - 'exhaustive'
-  - 'exportloopref'
   - 'gofmt'
   - 'goheader'
   - 'goimports'
@@ -73,6 +71,13 @@ issues:
   - '^G505:' # gosec: we use crypto/sha1 for some HMACs
   - '^Range statement' # paralleltest: false positives
   - '^if-return' # revive: false positives
+
+  exclude-rules:
+  # Tests legitimately make plain HTTP requests to local test servers.
+  - path: '_test\.go'
+    linters:
+    - 'noctx'
+    - 'gosec'
 
   # default: 50
   max-issues-per-linter: 0

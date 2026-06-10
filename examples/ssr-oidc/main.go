@@ -44,8 +44,8 @@ import (
 	"github.com/mikehelmick/go-bananas/render"
 	"github.com/mikehelmick/go-bananas/response"
 	"github.com/mikehelmick/go-bananas/secrets"
-	gbsession "github.com/mikehelmick/go-bananas/session"
 	"github.com/mikehelmick/go-bananas/server"
+	gbsession "github.com/mikehelmick/go-bananas/session"
 	"github.com/mikehelmick/go-bananas/webctx"
 )
 

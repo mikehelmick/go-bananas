@@ -29,7 +29,9 @@ func ExampleCache() {
 	}
 	defer c.Stop()
 
-	c.Set("greeting", "hello")
+	if err := c.Set("greeting", "hello"); err != nil {
+		panic(err)
+	}
 
 	if v, ok := c.Lookup("greeting"); ok {
 		fmt.Println(v)
@@ -51,7 +53,9 @@ func ExampleCache_WriteThruLookup() {
 	}
 
 	// The first call computes the value; the second is served from the cache.
-	c.WriteThruLookup("answer", expensive)
+	if _, err := c.WriteThruLookup("answer", expensive); err != nil {
+		panic(err)
+	}
 	v, _ := c.WriteThruLookup("answer", expensive)
 
 	fmt.Println(v, calls)

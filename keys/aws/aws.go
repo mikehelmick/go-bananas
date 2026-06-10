@@ -36,35 +36,35 @@ import (
 )
 
 func init() {
-	keys.RegisterManager("AWS_KMS", NewAWSKMS)
+	keys.RegisterManager("AWS_KMS", NewKMS)
 }
 
-var _ keys.KeyManager = (*AWSKMS)(nil)
+var _ keys.KeyManager = (*KMS)(nil)
 
-// AWSKMS is a [github.com/mikehelmick/go-bananas/keys.KeyManager] backed by AWS
+// KMS is a [github.com/mikehelmick/go-bananas/keys.KeyManager] backed by AWS
 // KMS.
-type AWSKMS struct {
+type KMS struct {
 	client *kms.Client
 }
 
-// NewAWSKMS creates a new AWS KMS client using the default AWS configuration
+// NewKMS creates a new AWS KMS client using the default AWS configuration
 // (environment, shared config, IAM role, etc.).
-func NewAWSKMS(ctx context.Context, _ *keys.Config) (keys.KeyManager, error) {
+func NewKMS(ctx context.Context, _ *keys.Config) (keys.KeyManager, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	return &AWSKMS{client: kms.NewFromConfig(cfg)}, nil
+	return &KMS{client: kms.NewFromConfig(cfg)}, nil
 }
 
 // NewSigner returns a signer for the given KMS key.
-func (s *AWSKMS) NewSigner(ctx context.Context, keyID string) (crypto.Signer, error) {
+func (s *KMS) NewSigner(ctx context.Context, keyID string) (crypto.Signer, error) {
 	return awskms.NewSigner(ctx, s.client, keyID)
 }
 
 // Encrypt encrypts plaintext with the named key, binding the AAD via the KMS
 // encryption context.
-func (s *AWSKMS) Encrypt(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error) {
+func (s *KMS) Encrypt(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error) {
 	output, err := s.client.Encrypt(ctx, &kms.EncryptInput{
 		KeyId: &keyID,
 		EncryptionContext: map[string]string{
@@ -79,7 +79,7 @@ func (s *AWSKMS) Encrypt(ctx context.Context, keyID string, plaintext, aad []byt
 }
 
 // Decrypt decrypts ciphertext with the named key and matching AAD.
-func (s *AWSKMS) Decrypt(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
+func (s *KMS) Decrypt(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
 	output, err := s.client.Decrypt(ctx, &kms.DecryptInput{
 		KeyId: &keyID,
 		EncryptionContext: map[string]string{

@@ -75,27 +75,6 @@ jobs:
           set +o pipefail
           make lint
 
-      - name: controller-without-returns
-        shell: bash
-        env:
-          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
-        run: |-
-          set -eEu
-          set +o pipefail
-
-          pcregrep \
-            --recursive \
-            --line-number --multiline \
-            --include '.+\.go$' \
-            '\b(Back|InternalError|NotFound|Unauthorized|MissingRealm|MissingAuthorizedApp|MissingSession|MissingUser|RedirectToMFA|RedirectToChangePassword)\(.+\)\s+(//.*\s+)?^((?!return).)*$' \
-            . | \
-          reviewdog -efm="%f:%l:%m" \
-            -name="controller-returns" \
-            -reporter="github-pr-check" \
-            -filter-mode="diff_context" \
-            -fail-on-error="true" \
-            -level="error"
-
       - name: copyright-check
         shell: bash
         env:

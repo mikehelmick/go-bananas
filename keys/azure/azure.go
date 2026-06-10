@@ -48,17 +48,17 @@ import (
 )
 
 func init() {
-	keys.RegisterManager("AZURE_KEY_VAULT", NewAzureKeyVault)
+	keys.RegisterManager("AZURE_KEY_VAULT", NewKeyVault)
 }
 
 var (
-	_ keys.KeyManager = (*AzureKeyVault)(nil)
+	_ keys.KeyManager = (*KeyVault)(nil)
 	_ crypto.Signer   = (*Signer)(nil)
 )
 
-// AzureKeyVault is a [github.com/mikehelmick/go-bananas/keys.KeyManager] backed
+// KeyVault is a [github.com/mikehelmick/go-bananas/keys.KeyManager] backed
 // by Azure Key Vault.
-type AzureKeyVault struct {
+type KeyVault struct {
 	client *keyvault.BaseClient
 }
 
@@ -81,22 +81,22 @@ func parseKeyID(id string) (*keyID, error) {
 	}, nil
 }
 
-// NewAzureKeyVault creates a new Key Vault key manager authorized from the
+// NewKeyVault creates a new Key Vault key manager authorized from the
 // environment.
-func NewAzureKeyVault(_ context.Context, _ *keys.Config) (keys.KeyManager, error) {
+func NewKeyVault(_ context.Context, _ *keys.Config) (keys.KeyManager, error) {
 	authorizer, err := azureauth.GetKeyVaultAuthorizer()
 	if err != nil {
-		return nil, fmt.Errorf("keys.NewAzureKeyVault: auth: %w", err)
+		return nil, fmt.Errorf("keys.NewKeyVault: auth: %w", err)
 	}
 	client := keyvault.New()
 	client.Authorizer = authorizer
-	return &AzureKeyVault{client: &client}, nil
+	return &KeyVault{client: &client}, nil
 }
 
 var _ keys.SigningKeyVersion = (*signingKeyVersion)(nil)
 
 type signingKeyVersion struct {
-	kv        *AzureKeyVault
+	kv        *KeyVault
 	kid       string
 	createdAt time.Time
 }
@@ -109,7 +109,7 @@ func (v *signingKeyVersion) Signer(ctx context.Context) (crypto.Signer, error) {
 }
 
 // SigningKeyVersions returns the versions for the parent "VAULT/KEY".
-func (v *AzureKeyVault) SigningKeyVersions(ctx context.Context, parent string) ([]keys.SigningKeyVersion, error) {
+func (v *KeyVault) SigningKeyVersions(ctx context.Context, parent string) ([]keys.SigningKeyVersion, error) {
 	parts := strings.SplitN(parent, "/", 2)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("key must include vaultName, keyName: %v", parent)
@@ -145,7 +145,7 @@ func (v *AzureKeyVault) SigningKeyVersions(ctx context.Context, parent string) (
 
 // CreateSigningKey creates a signing key under parent, returning its id. If it
 // already exists, the existing id is returned.
-func (v *AzureKeyVault) CreateSigningKey(ctx context.Context, parent, name string) (string, error) {
+func (v *KeyVault) CreateSigningKey(ctx context.Context, parent, name string) (string, error) {
 	vaultID := fmt.Sprintf("https://%s.vault.azure.net", parent)
 	if _, err := v.client.GetKey(ctx, vaultID, name, ""); err != nil {
 		var aerr autorest.DetailedError
@@ -162,7 +162,7 @@ func (v *AzureKeyVault) CreateSigningKey(ctx context.Context, parent, name strin
 }
 
 // CreateKeyVersion creates a new EC P-256 version of the parent "VAULT/KEY".
-func (v *AzureKeyVault) CreateKeyVersion(ctx context.Context, parent string) (string, error) {
+func (v *KeyVault) CreateKeyVersion(ctx context.Context, parent string) (string, error) {
 	parts := strings.SplitN(parent, "/", 2)
 	if len(parts) < 2 {
 		return "", fmt.Errorf("key must include vaultName, keyName: %v", parent)
@@ -188,13 +188,13 @@ func (v *AzureKeyVault) CreateKeyVersion(ctx context.Context, parent string) (st
 }
 
 // DestroyKeyVersion is unsupported on Key Vault.
-func (v *AzureKeyVault) DestroyKeyVersion(_ context.Context, _ string) error {
+func (v *KeyVault) DestroyKeyVersion(_ context.Context, _ string) error {
 	return fmt.Errorf("keyvault does not support destroying a key version")
 }
 
 // Encrypt encrypts plaintext with the named key. Key Vault does not support
 // additional authenticated data, so aad is ignored.
-func (v *AzureKeyVault) Encrypt(ctx context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
+func (v *KeyVault) Encrypt(ctx context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
 	k, err := parseKeyID(keyID)
 	if err != nil {
 		return nil, err
@@ -215,7 +215,7 @@ func (v *AzureKeyVault) Encrypt(ctx context.Context, keyID string, plaintext, _ 
 }
 
 // Decrypt decrypts ciphertext with the named key. aad is ignored (unsupported).
-func (v *AzureKeyVault) Decrypt(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
+func (v *KeyVault) Decrypt(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
 	k, err := parseKeyID(keyID)
 	if err != nil {
 		return nil, err
@@ -236,7 +236,7 @@ func (v *AzureKeyVault) Decrypt(ctx context.Context, keyID string, ciphertext, _
 }
 
 // NewSigner returns a signer for the key "VAULT/KEY/VERSION".
-func (v *AzureKeyVault) NewSigner(ctx context.Context, keyID string) (crypto.Signer, error) {
+func (v *KeyVault) NewSigner(ctx context.Context, keyID string) (crypto.Signer, error) {
 	k, err := parseKeyID(keyID)
 	if err != nil {
 		return nil, err

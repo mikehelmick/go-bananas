@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	htmltemplate "html/template"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -157,7 +158,7 @@ func TestWithFuncs_OverrideAndMerge(t *testing.T) {
 			`{{define "custom"}}{{greet}}|{{toUpper "x"}}{{end}}`)},
 	}
 	r := mustNew(t, fsys, WithFuncs(htmltemplate.FuncMap{
-		"greet":   func() string { return "hello" },         // new function
+		"greet":   func() string { return "hello" },          // new function
 		"toUpper": func(string) string { return "OVERRIDE" }, // override a default
 	}))
 
@@ -179,6 +180,29 @@ func TestWithBuildID_CacheBusting(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "?deadbeef") {
 		t.Errorf("expected build id in asset URL, got:\n%s", out)
+	}
+}
+
+func TestRenderText(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"greeting.txt": &fstest.MapFile{Data: []byte(
+			`{{define "greeting"}}Hello, {{toUpper .name}}!{{end}}`)},
+	}
+	r := mustNew(t, fsys)
+
+	var buf strings.Builder
+	if err := r.RenderText(&buf, "greeting", map[string]any{"name": "bananas"}); err != nil {
+		t.Fatalf("RenderText: %v", err)
+	}
+	if got, want := buf.String(), "Hello, BANANAS!"; got != want {
+		t.Fatalf("RenderText = %q, want %q", got, want)
+	}
+
+	// An unknown template returns an error rather than partial output.
+	if err := r.RenderText(io.Discard, "nope", nil); err == nil {
+		t.Fatal("expected an error for an unknown text template")
 	}
 }
 

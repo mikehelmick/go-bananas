@@ -50,19 +50,19 @@ func Resolver(sm SecretManager, config *Config) envconfig.MutatorFunc {
 		dir: config.SecretsDir,
 	}
 
-	return envconfig.LegacyMutatorFunc(func(ctx context.Context, key, value string) (string, error) {
-		vals := strings.Split(value, ",")
+	return envconfig.MutatorFunc(func(ctx context.Context, _, resolvedKey, _, currentValue string) (string, bool, error) {
+		vals := strings.Split(currentValue, ",")
 		resolved := make([]string, len(vals))
 
 		for i, val := range vals {
-			s, err := resolver.resolve(ctx, key, val)
+			s, err := resolver.resolve(ctx, resolvedKey, val)
 			if err != nil {
-				return "", err
+				return "", false, err
 			}
 			resolved[i] = s
 		}
 
-		return strings.Join(resolved, ","), nil
+		return strings.Join(resolved, ","), false, nil
 	})
 }
 

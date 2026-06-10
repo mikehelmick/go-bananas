@@ -42,10 +42,10 @@ func TestProcessLocale(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		query     string
-		wantLang  string
-		wantDir   string
+		name     string
+		query    string
+		wantLang string
+		wantDir  string
 	}{
 		{"default", "", "en", LeftAlign},
 		{"arabic_rtl", "ar", "ar", RightAlign},

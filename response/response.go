@@ -36,8 +36,9 @@ var (
 
 // Back redirects to the request's referrer with a 303 See Other. If the referrer
 // is missing, unparseable, or points at a different host, it redirects to "/"
-// instead, preventing open-redirect abuse.
-func Back(w http.ResponseWriter, r *http.Request, h *render.Renderer) {
+// instead, preventing open-redirect abuse. The renderer parameter is accepted
+// for signature consistency with the other helpers but is unused.
+func Back(w http.ResponseWriter, r *http.Request, _ *render.Renderer) {
 	logger := logging.Named(logging.FromContext(r.Context()), "response.Back")
 
 	ref := r.Header.Get("Referer")

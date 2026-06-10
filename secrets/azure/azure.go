@@ -35,34 +35,34 @@ import (
 )
 
 func init() {
-	secrets.RegisterManager("AZURE_KEY_VAULT", NewAzureKeyVault)
+	secrets.RegisterManager("AZURE_KEY_VAULT", NewKeyVault)
 }
 
-var _ secrets.SecretManager = (*AzureKeyVault)(nil)
+var _ secrets.SecretManager = (*KeyVault)(nil)
 
-// AzureKeyVault is a [github.com/mikehelmick/go-bananas/secrets.SecretManager]
+// KeyVault is a [github.com/mikehelmick/go-bananas/secrets.SecretManager]
 // backed by Azure Key Vault.
-type AzureKeyVault struct {
+type KeyVault struct {
 	client *keyvault.BaseClient
 }
 
-// NewAzureKeyVault creates a new Key Vault secret manager authorized from the
+// NewKeyVault creates a new Key Vault secret manager authorized from the
 // environment.
-func NewAzureKeyVault(_ context.Context, _ *secrets.Config) (secrets.SecretManager, error) {
+func NewKeyVault(_ context.Context, _ *secrets.Config) (secrets.SecretManager, error) {
 	authorizer, err := azureauth.GetKeyVaultAuthorizer()
 	if err != nil {
-		return nil, fmt.Errorf("secrets.NewAzureKeyVault: auth: %w", err)
+		return nil, fmt.Errorf("secrets.NewKeyVault: auth: %w", err)
 	}
 
 	client := keyvault.New()
 	client.Authorizer = authorizer
-	return &AzureKeyVault{client: &client}, nil
+	return &KeyVault{client: &client}, nil
 }
 
 // GetSecretValue reads a secret named "VAULT_NAME/SECRET_NAME/SECRET_VERSION"
 // (the version is optional; omit it for the latest), e.g.
 // "my-company-vault/api-key/1".
-func (kv *AzureKeyVault) GetSecretValue(ctx context.Context, name string) (string, error) {
+func (kv *KeyVault) GetSecretValue(ctx context.Context, name string) (string, error) {
 	var vaultName, secretName, version string
 	parts := strings.SplitN(name, "/", 3)
 	switch len(parts) {

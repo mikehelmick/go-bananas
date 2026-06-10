@@ -35,32 +35,32 @@ import (
 )
 
 func init() {
-	secrets.RegisterManager("AWS_SECRETS_MANAGER", NewAWSSecretsManager)
+	secrets.RegisterManager("AWS_SECRETS_MANAGER", NewSecretsManager)
 }
 
-var _ secrets.SecretManager = (*AWSSecretsManager)(nil)
+var _ secrets.SecretManager = (*SecretsManager)(nil)
 
-// AWSSecretsManager is a [github.com/mikehelmick/go-bananas/secrets.SecretManager]
+// SecretsManager is a [github.com/mikehelmick/go-bananas/secrets.SecretManager]
 // backed by AWS Secrets Manager.
-type AWSSecretsManager struct {
+type SecretsManager struct {
 	client *secretsmanager.Client
 }
 
-// NewAWSSecretsManager creates a new AWS Secrets Manager client using the
+// NewSecretsManager creates a new AWS Secrets Manager client using the
 // default AWS configuration (environment, shared config, IAM role, etc.).
-func NewAWSSecretsManager(ctx context.Context, _ *secrets.Config) (secrets.SecretManager, error) {
+func NewSecretsManager(ctx context.Context, _ *secrets.Config) (secrets.SecretManager, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	return &AWSSecretsManager{client: secretsmanager.NewFromConfig(cfg)}, nil
+	return &SecretsManager{client: secretsmanager.NewFromConfig(cfg)}, nil
 }
 
 // GetSecretValue reads a secret. The name may include an optional version and
 // stage: "SECRET@VERSION#STAGE", where SECRET is the name or ARN, VERSION is the
 // version id, and STAGE is one of AWSCURRENT or AWSPREVIOUS. Values are returned
 // as plaintext strings.
-func (sm *AWSSecretsManager) GetSecretValue(ctx context.Context, name string) (string, error) {
+func (sm *SecretsManager) GetSecretValue(ctx context.Context, name string) (string, error) {
 	var secretID, versionID, versionStage string
 
 	current := &secretID
