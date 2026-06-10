@@ -1,0 +1,30 @@
+:root { color-scheme: light dark; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  margin: 0;
+  padding: 2rem 1rem;
+  background: Canvas;
+  color: CanvasText;
+}
+
+main { max-width: 42rem; margin: 0 auto; }
+
+h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+.tagline { color: GrayText; margin-top: 0; }
+
+form { display: flex; gap: 0.5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+label { flex-basis: 100%; font-weight: 600; }
+input[type="text"] { flex: 1; padding: 0.5rem; min-width: 12rem; }
+button { padding: 0.5rem 1rem; cursor: pointer; }
+
+.flash { padding: 0.75rem 1rem; border-radius: 0.375rem; margin: 0.5rem 0; }
+.flash-error { background: #fde2e1; color: #7a271a; }
+.flash-warning { background: #fef3c7; color: #713f12; }
+.flash-alert { background: #dcfce7; color: #14532d; }
+
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
+dt { font-weight: 600; }
+
+footer { margin-top: 2rem; color: GrayText; }

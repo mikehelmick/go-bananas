@@ -1,0 +1,5 @@
+{{define "400"}}<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{{.title}}</title>{{cssIncludeTag}}</head>
+<body><main><h1>400</h1><p>{{or .error "Something went wrong."}}</p><p><a href="/">Home</a></p></main></body>
+</html>{{end}}

@@ -1,0 +1,13 @@
+{
+  "name": "go-bananas",
+  "version": "0.1.0",
+  "description": "Skills for building server-side-rendered web apps with the go-bananas framework: scaffolding, the middleware chain, authentication (the Authenticator seam + OIDC), and secrets/keys.",
+  "author": {
+    "name": "Mike Helmick",
+    "url": "https://github.com/mikehelmick"
+  },
+  "homepage": "https://mikehelmick.github.io/go-bananas",
+  "repository": "https://github.com/mikehelmick/go-bananas",
+  "license": "Apache-2.0",
+  "keywords": ["go", "golang", "ssr", "web-framework", "middleware", "oidc", "csrf"]
+}
