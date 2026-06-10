@@ -1,0 +1,38 @@
+{{define "home"}}<!doctype html>
+<html lang="{{or .textLanguage "en"}}" dir="{{or .textDirection "ltr"}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.title}}</title>
+  {{.csrfMeta}}
+  {{cssIncludeTag}}
+</head>
+<body>
+  <main>
+    <h1>🍌 {{.server}}</h1>
+    <p class="tagline">The application framework for Go that is so simple, it's Bananas.</p>
+
+    {{range .flash.Errors}}<div class="flash flash-error">{{.}}</div>{{end}}
+    {{range .flash.Warnings}}<div class="flash flash-warning">{{.}}</div>{{end}}
+    {{range .flash.Alerts}}<div class="flash flash-alert">{{.}}</div>{{end}}
+
+    <form method="POST" action="/submit">
+      {{.csrfField}}
+      <label for="message">Leave a message</label>
+      <input id="message" type="text" name="message" placeholder="Say something nice" required>
+      <button type="submit">Submit</button>
+    </form>
+
+    {{if .principal}}
+      <p>Signed in as <strong>{{.principal.Name}}</strong> ({{.principal.Email}}). <a href="/logout">Sign out</a></p>
+    {{else}}
+      <p><a href="/login">Sign in with OIDC</a></p>
+    {{end}}
+
+    <footer>
+      <small>request id: {{.requestID}}{{if .devMode}} · dev mode{{end}}</small>
+    </footer>
+  </main>
+  {{jsIncludeTag}}
+</body>
+</html>{{end}}

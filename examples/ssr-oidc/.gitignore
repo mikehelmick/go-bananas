@@ -1,0 +1,5 @@
+# Compiled binary (named after the module directory by `go build`).
+/ssr-oidc
+
+# Locally-generated secrets (the app creates a fresh cookie key on first run).
+/local-secrets/

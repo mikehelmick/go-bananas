@@ -1,0 +1,19 @@
+{{define "me"}}<!doctype html>
+<html lang="{{or .textLanguage "en"}}" dir="{{or .textDirection "ltr"}}">
+<head>
+  <meta charset="utf-8">
+  <title>{{.title}}</title>
+  {{cssIncludeTag}}
+</head>
+<body>
+  <main>
+    <h1>Your profile</h1>
+    <dl>
+      <dt>Subject</dt><dd>{{.principal.Subject}}</dd>
+      <dt>Name</dt><dd>{{.principal.Name}}</dd>
+      <dt>Email</dt><dd>{{.principal.Email}}</dd>
+    </dl>
+    <p><a href="/">Home</a> · <a href="/logout">Sign out</a></p>
+  </main>
+</body>
+</html>{{end}}
