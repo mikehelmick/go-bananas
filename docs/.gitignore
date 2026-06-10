@@ -1,0 +1,11 @@
+# Hugo build output and caches
+/public/
+/resources/
+.hugo_build.lock
+
+# Node / Docsy assets, regenerated in CI via `hugo mod npm pack` + `npm install`.
+# Matches node_modules at any depth (including the generated npm workspace).
+node_modules/
+/package.json
+/package-lock.json
+/packages/
