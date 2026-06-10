@@ -1,0 +1,18 @@
+{
+  "name": "go-bananas",
+  "owner": {
+    "name": "Mike Helmick",
+    "url": "https://github.com/mikehelmick"
+  },
+  "metadata": {
+    "description": "The go-bananas framework marketplace: skills for building SSR web apps in Go.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "go-bananas",
+      "source": ".",
+      "description": "Skills for building server-side-rendered web apps with go-bananas: scaffolding, middleware, auth/OIDC, and secrets/keys."
+    }
+  ]
+}
