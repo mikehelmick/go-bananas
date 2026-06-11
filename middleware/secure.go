@@ -35,10 +35,9 @@ const (
 // (HSTS, nosniff, referrer policy, and, for HTML servers, frame denial). When
 // devMode is true, HTTPS redirects and HSTS are relaxed for local development.
 //
-// It deliberately does NOT set a Content-Security-Policy: a useful CSP is highly
-// application-specific. Applications should add their own CSP header — combine it
-// with [ProcessNonce], which supplies a per-request, server-generated nonce for
-// trusted inline scripts/styles.
+// It deliberately does NOT set a Content-Security-Policy: a useful CSP is
+// highly application-specific. Add one with [ContentSecurityPolicy], combined
+// with [ProcessNonce] for per-request nonces on trusted inline scripts/styles.
 func SecureHeaders(devMode bool, serverType ServerType) mux.MiddlewareFunc {
 	options := secure.Options{
 		BrowserXssFilter:     false,

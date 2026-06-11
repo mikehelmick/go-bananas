@@ -18,9 +18,9 @@
 
     <form method="POST" action="/submit">
       {{.csrfField}}
-      <label for="message">Leave a message</label>
+      <label for="message">{{tDefault .locale "Leave a message" "form.label"}}</label>
       <input id="message" type="text" name="message" placeholder="Say something nice" required>
-      <button type="submit">Submit</button>
+      <button type="submit">{{tDefault .locale "Submit" "form.submit"}}</button>
     </form>
 
     {{if .principal}}

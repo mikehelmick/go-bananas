@@ -68,6 +68,10 @@ func main() {
 		h.RenderHTML(w, "home", m)
 	})
 
+	// Serve the embedded static assets the renderer's SRI tags point at.
+	static := middleware.ConfigureStaticAssets(true)
+	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+
 	srv, err := server.New("8080")
 	if err != nil {
 		panic(err)
@@ -89,6 +93,7 @@ for the full picture, including the recommended middleware chain.
 | [`middleware`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/middleware) | Composable `gorilla/mux` middleware + the `Authenticator` seam |
 | [`session`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/session) · [`flash`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/flash) · [`cookiestore`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/cookiestore) | Typed session accessors, one-shot flash messages, hot-reloadable cookie store |
 | [`webctx`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/webctx) · [`response`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/response) | Request-scoped context helpers and HTTP response/error helpers |
+| [`i18n`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/i18n) | gettext (`.po`) translations with Accept-Language matching |
 
 **Infrastructure layer**
 

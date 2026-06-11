@@ -49,12 +49,24 @@ func main() {
 	r.Use(middleware.PopulateRequestID(h))
 	r.Use(middleware.PopulateTraceID())
 	r.Use(middleware.PopulateLogger(logging.DefaultLogger()))
+	r.Use(middleware.LogRequests())
 	r.Use(middleware.SecureHeaders(devMode, middleware.ServerTypeHTML))
+	r.Use(middleware.ProcessNonce())
+	r.Use(middleware.ContentSecurityPolicy(
+		"default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; object-src 'none'"))
 	r.Use(middleware.GzipResponse())
 	r.Use(middleware.RequireSession(store, nil, h))
 	r.Use(middleware.HandleCSRF(h))
 	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{ServerName: "my-app", DevMode: devMode}))
 	r.Use(middleware.InjectCurrentPath())
+
+	// REQUIRED: serve the embedded static assets the SRI tags point at,
+	// or every page's CSS/JS will 404.
+	static := middleware.ConfigureStaticAssets(devMode)
+	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+
+	// Liveness/readiness probes.
+	r.Handle("/healthz", server.HealthzHandler()).Methods(http.MethodGet)
 
 	r.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		m := webctx.TemplateMapFromContext(req.Context())

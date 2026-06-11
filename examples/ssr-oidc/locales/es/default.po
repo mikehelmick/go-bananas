@@ -1,0 +1,12 @@
+msgid ""
+msgstr ""
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "form.label"
+msgstr "Deja un mensaje"
+
+msgid "form.submit"
+msgstr "Enviar"

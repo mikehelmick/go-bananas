@@ -28,17 +28,19 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
-	"github.com/leonelquinteros/gotext"
 	"github.com/mikehelmick/go-bananas/cookiestore"
+	"github.com/mikehelmick/go-bananas/i18n"
 	"github.com/mikehelmick/go-bananas/logging"
 	"github.com/mikehelmick/go-bananas/middleware"
 	"github.com/mikehelmick/go-bananas/render"
@@ -49,8 +51,14 @@ import (
 	"github.com/mikehelmick/go-bananas/webctx"
 )
 
-//go:embed templates static
+//go:embed templates static locales
 var assets embed.FS
+
+// csp is the Content-Security-Policy for every page. The nonce placeholder is
+// filled per request by middleware.ContentSecurityPolicy from the ProcessNonce
+// nonce, so any inline script tagged with the template nonce is trusted.
+const csp = "default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; " +
+	"style-src 'self'; object-src 'none'; frame-ancestors 'none'"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -63,7 +71,7 @@ func main() {
 }
 
 func realMain(ctx context.Context) error {
-	logger := logging.NewLogger(logging.LevelFromString(env("LOG_LEVEL", "info")), envBool("DEV_MODE", true))
+	logger := logging.NewLogger(logging.LevelFromString(env("LOG_LEVEL", "info")), envBool("DEV_MODE", false))
 	ctx = logging.WithLogger(ctx, logger)
 
 	app, err := newApp(ctx)
@@ -87,12 +95,13 @@ func realMain(ctx context.Context) error {
 type app struct {
 	renderer *render.Renderer
 	store    sessions.Store
+	locales  *i18n.LocaleMap
 	devMode  bool
 	oidc     *OIDC // nil when OIDC is not configured
 }
 
 func newApp(ctx context.Context) (*app, error) {
-	devMode := envBool("DEV_MODE", true)
+	devMode := envBool("DEV_MODE", false)
 
 	renderer, err := render.New(assets,
 		render.WithDevMode(devMode),
@@ -118,7 +127,18 @@ func newApp(ctx context.Context) (*app, error) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	a := &app{renderer: renderer, store: store, devMode: devMode}
+	// Load the gettext translations; ProcessLocale serves the best match per
+	// request and the templates read it via the "t"/"tDefault" functions.
+	localesFS, err := fs.Sub(assets, "locales")
+	if err != nil {
+		return nil, err
+	}
+	locales, err := i18n.Load(localesFS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load locales: %w", err)
+	}
+
+	a := &app{renderer: renderer, store: store, locales: locales, devMode: devMode}
 
 	if issuer := env("OIDC_ISSUER", ""); issuer != "" {
 		oidc, err := NewOIDC(ctx, renderer, issuer,
@@ -140,9 +160,16 @@ func (a *app) router() http.Handler {
 	r.Use(middleware.PopulateRequestID(a.renderer))
 	r.Use(middleware.PopulateTraceID())
 	r.Use(middleware.PopulateLogger(logging.DefaultLogger()))
+	r.Use(middleware.LogRequests())
 	r.Use(middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML))
+	r.Use(middleware.ProcessNonce())
+	r.Use(middleware.ContentSecurityPolicy(csp))
 	r.Use(middleware.GzipResponse())
 	r.Use(middleware.RequireSession(a.store, nil, a.renderer))
+	// Expire sessions idle for more than 30 minutes back to the home page.
+	r.Use(middleware.CheckSessionIdleNoAuth(30*time.Minute, func(w http.ResponseWriter, r *http.Request) {
+		response.SeeOther(w, r, "/")
+	}))
 	r.Use(middleware.HandleCSRF(a.renderer))
 	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{
 		ServerName: "go-bananas",
@@ -150,8 +177,18 @@ func (a *app) router() http.Handler {
 		DevMode:    a.devMode,
 	}))
 	r.Use(middleware.InjectCurrentPath())
-	r.Use(middleware.ProcessLocale(localeProvider{}))
+	r.Use(middleware.ProcessLocale(a.locales))
 	r.Use(a.injectPrincipal)
+
+	// Serve the embedded static assets the renderer's SRI tags point at.
+	static := middleware.ConfigureStaticAssets(a.devMode)
+	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+
+	// Liveness and readiness probes.
+	r.Handle("/healthz", server.HealthzHandler()).Methods(http.MethodGet)
+	r.Handle("/readyz", server.ReadyzHandler(map[string]func(context.Context) error{
+		"sessions": func(context.Context) error { return nil }, // demo check
+	})).Methods(http.MethodGet)
 
 	r.HandleFunc("/", a.handleHome).Methods(http.MethodGet)
 	r.HandleFunc("/submit", a.handleSubmit).Methods(http.MethodPost)
@@ -247,22 +284,6 @@ func (a *app) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	storeUser(r, &User{Subject: "dev|1", Email: "dev@example.com", Name: "Dev User"})
 	gbsession.Flash(webctx.SessionFromContext(r.Context())).Alert("Signed in as the dev user.")
 	response.SeeOther(w, r, "/me")
-}
-
-// localeProvider is a trivial LocaleProvider that derives the language from the
-// request hints and returns an empty translator (so tDefault falls back to its
-// default strings).
-type localeProvider struct{}
-
-func (localeProvider) Lookup(hints ...string) (gotext.Translator, string) {
-	lang := "en"
-	for _, h := range hints {
-		if h != "" {
-			lang = h
-			break
-		}
-	}
-	return gotext.NewPo(), lang
 }
 
 // cookieEntropy returns an EntropyFunc backed by a secret manager. On first run

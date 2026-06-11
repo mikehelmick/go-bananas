@@ -30,8 +30,9 @@ import (
 //
 // The nonce is generated server-side; it is deliberately NOT read from a request
 // header, because a client-controlled nonce would let an attacker predict it and
-// defeat the CSP. To take effect, the application must emit a Content-Security-
-// Policy response header that references the same nonce.
+// defeat the CSP. To take effect, emit a Content-Security-Policy header that
+// references the same nonce — [ContentSecurityPolicy] does this via its
+// [CSPNoncePlaceholder] when installed after this middleware.
 func ProcessNonce() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

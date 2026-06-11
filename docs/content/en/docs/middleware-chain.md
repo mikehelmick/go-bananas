@@ -16,16 +16,29 @@ r.Use(middleware.Recovery(h))                              // outermost: catch p
 r.Use(middleware.PopulateRequestID(h))                     // assign a request id
 r.Use(middleware.PopulateTraceID())                        // extract upstream trace id
 r.Use(middleware.PopulateLogger(logging.DefaultLogger()))  // request-scoped logger
+r.Use(middleware.LogRequests())                            // one Info line per request
 r.Use(middleware.SecureHeaders(devMode, middleware.ServerTypeHTML))
+r.Use(middleware.ProcessNonce())                           // per-request CSP nonce
+r.Use(middleware.ContentSecurityPolicy(
+	"default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; object-src 'none'"))
 r.Use(middleware.GzipResponse())
 r.Use(middleware.RequireSession(store, nil, h))            // load/save the session
+r.Use(middleware.CheckSessionIdleNoAuth(30*time.Minute, onIdle))
 r.Use(middleware.HandleCSRF(h))                            // after RequireSession
 r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{
 	ServerName: "go-bananas",
 	DevMode:    devMode,
 }))
 r.Use(middleware.InjectCurrentPath())
-r.Use(middleware.ProcessLocale(localeProvider))            // optional i18n
+r.Use(middleware.ProcessLocale(locales))                   // i18n — see the i18n guide
+```
+
+Don't forget the static assets the renderer's SRI tags point at — serve them
+with cache headers via `ConfigureStaticAssets`:
+
+```go
+static := middleware.ConfigureStaticAssets(devMode)
+r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
 ```
 
 ## Why the order matters
@@ -33,7 +46,11 @@ r.Use(middleware.ProcessLocale(localeProvider))            // optional i18n
 - **`Recovery` is outermost** so it can turn a panic in any downstream handler or
   middleware into a clean 500.
 - **`PopulateLogger` comes after `PopulateRequestID`/`PopulateTraceID`** so the
-  request logger is tagged with those IDs.
+  request logger is tagged with those IDs, and **`LogRequests` after
+  `PopulateLogger`** so each access-log line carries them too.
+- **`ContentSecurityPolicy` comes after `ProcessNonce`** so the `{{nonce}}`
+  placeholder in the policy is filled with the same per-request nonce templates
+  read via `webctx.NonceFromContext`.
 - **`HandleCSRF` comes after `RequireSession`** because the CSRF token is stored
   on the session.
 - **`PopulateTemplateVariables` comes after the session middleware** so the flash
@@ -49,9 +66,7 @@ Other middleware you can drop in where appropriate:
 | `RequireHeader` / `RequireHeaderValues` / `RequireHostHeader` | Reject requests lacking a required header/host |
 | `OnlyIfEnabled` | Hide routes behind a 404 when a feature flag is off |
 | `ProcessDebug` | Echo build info in response headers when `X-Debug` is set |
-| `ProcessNonce` | Read a CSP nonce from `X-Nonce` for templates |
 | `AddOperatingSystemFromUserAgent` | Infer the client OS for templates |
-| `CheckSessionIdleNoAuth` | Enforce an idle-timeout independent of auth |
 
 ## Authentication
 

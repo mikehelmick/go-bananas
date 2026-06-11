@@ -16,6 +16,7 @@ package middleware
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -28,9 +29,16 @@ import (
 // that sets it will be honored.
 const TraceHeader = "X-Cloud-Trace-Context"
 
+// validTraceID matches plausible trace identifiers (hex, W3C trace IDs, UUIDs).
+// Because the trace header is client-controlled and the stored value is
+// re-emitted on outbound requests by response.TracedHTTPClient, anything else
+// is rejected rather than propagated.
+var validTraceID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 // PopulateTraceID extracts the trace ID from the trace header (the portion
-// before the first "/") and stores it on the context, if present and not already
-// set. Install it before [PopulateLogger].
+// before the first "/") and stores it on the context, if present, well-formed
+// (alphanumeric/dash/underscore, at most 128 characters), and not already set.
+// Install it before [PopulateLogger].
 func PopulateTraceID() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +47,8 @@ func PopulateTraceID() mux.MiddlewareFunc {
 			if existing := webctx.TraceIDFromContext(ctx); existing == "" {
 				if v := r.Header.Get(TraceHeader); v != "" {
 					parts := strings.Split(v, "/")
-					if len(parts) > 0 && len(parts[0]) > 0 {
-						ctx = webctx.WithTraceID(ctx, util.TrimSpace(parts[0]))
+					if id := util.TrimSpace(parts[0]); validTraceID.MatchString(id) {
+						ctx = webctx.WithTraceID(ctx, id)
 						r = r.Clone(ctx)
 					}
 				}
