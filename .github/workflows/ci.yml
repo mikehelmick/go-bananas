@@ -83,8 +83,9 @@ jobs:
           set -eEu
           set +o pipefail
 
-          YEAR=$(date +"%Y")
-          find . -type f -name '*.go' -exec awk 'FNR==1{if ($0!~"Copyright '"${YEAR}"'" && $0!~"Code generated") print FILENAME ":1:missing copyright or invalid copyright year";}' '{}' + | \
+          # Require a copyright header with any plausible year — existing files
+          # keep their original year; only the header's presence is enforced.
+          find . -type f -name '*.go' -exec awk 'FNR==1{if ($0!~"Copyright 20[0-9][0-9]" && $0!~"Code generated") print FILENAME ":1:missing copyright header";}' '{}' + | \
           reviewdog -efm="%f:%l:%m" \
             -name="copyright-check" \
             -reporter="github-pr-check" \

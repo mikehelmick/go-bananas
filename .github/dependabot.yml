@@ -1,0 +1,32 @@
+# Keep dependencies and workflow actions current automatically.
+version: 2
+updates:
+  # Core framework module.
+  - package-ecosystem: 'gomod'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      go-deps:
+        patterns: ['*']
+
+  # Example application (separate module).
+  - package-ecosystem: 'gomod'
+    directory: '/examples/ssr-oidc'
+    schedule:
+      interval: 'weekly'
+    groups:
+      go-deps:
+        patterns: ['*']
+
+  # Documentation site (Hugo Modules, also a go.mod).
+  - package-ecosystem: 'gomod'
+    directory: '/docs'
+    schedule:
+      interval: 'weekly'
+
+  # GitHub Actions across all workflows.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
