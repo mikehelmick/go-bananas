@@ -64,7 +64,7 @@ func TestReadyzHandler(t *testing.T) {
 
 		h := ReadyzHandler(map[string]func(context.Context) error{
 			"alpha": func(context.Context) error { return nil },
-			"beta":  func(context.Context) error { return errors.New("connection refused") },
+			"beta":  func(context.Context) error { return errors.New("dial tcp 10.0.3.12:5432: connection refused") },
 		})
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -74,8 +74,8 @@ func TestReadyzHandler(t *testing.T) {
 		}
 
 		var body struct {
-			Status string            `json:"status"`
-			Failed map[string]string `json:"failed"`
+			Status string   `json:"status"`
+			Failed []string `json:"failed"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 			t.Fatalf("invalid JSON body %q: %v", w.Body.String(), err)
@@ -83,11 +83,31 @@ func TestReadyzHandler(t *testing.T) {
 		if body.Status != "unavailable" {
 			t.Errorf("status field = %q", body.Status)
 		}
-		if body.Failed["beta"] != "connection refused" {
-			t.Errorf("failed = %v", body.Failed)
+		if len(body.Failed) != 1 || body.Failed[0] != "beta" {
+			t.Errorf("failed = %v, want [beta]", body.Failed)
 		}
-		if _, ok := body.Failed["alpha"]; ok {
-			t.Error("passing check must not be reported as failed")
+		// The raw error detail (internal addresses etc.) must never reach the
+		// public body — only the check name.
+		if strings.Contains(w.Body.String(), "10.0.3.12") {
+			t.Errorf("body leaked check error detail: %s", w.Body.String())
+		}
+	})
+
+	t.Run("panicking_check_is_failed", func(t *testing.T) {
+		t.Parallel()
+
+		h := ReadyzHandler(map[string]func(context.Context) error{
+			"boom": func(context.Context) error { panic("nil pointer") },
+			"ok":   func(context.Context) error { return nil },
+		})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503 (panic must degrade to failed, not crash)", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), `"boom"`) {
+			t.Errorf("body = %s, want boom listed as failed", w.Body.String())
 		}
 	})
 

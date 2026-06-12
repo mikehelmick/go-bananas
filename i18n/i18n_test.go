@@ -126,3 +126,34 @@ func TestTranslatorLanguage(t *testing.T) {
 		t.Errorf("TranslatorLanguage = %q, want es", got)
 	}
 }
+
+// TestConcurrentLookupWithReloading exercises the reload path under concurrent
+// lookups; with -race this guards the reload's replacement of the data map and
+// matcher against unlocked readers.
+func TestConcurrentLookupWithReloading(t *testing.T) {
+	t.Parallel()
+
+	l, err := Load(testLocales(), WithReloading(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hints := []string{"es", "pt-br", "en", "zz"}
+	done := make(chan struct{})
+	for i := range 8 {
+		hint := hints[i%len(hints)]
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for range 50 {
+				tr, lang := l.Lookup(hint)
+				if tr == nil || lang == "" {
+					t.Errorf("Lookup(%q) returned nil/empty", hint)
+					return
+				}
+			}
+		}()
+	}
+	for range 8 {
+		<-done
+	}
+}

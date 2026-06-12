@@ -59,13 +59,14 @@ const poFileName = "default.po"
 type LocaleMap struct {
 	fsys fs.FS
 
+	// mu guards data and matcher: reloads take the write lock while lookups
+	// take the read lock, so a reload can never race a concurrent lookup.
+	mu      sync.RWMutex
 	data    map[string]gotext.Translator
 	matcher language.Matcher
 
 	defaultLocale string
-
-	reload     bool
-	reloadLock sync.Mutex
+	reload        bool
 }
 
 // Option configures a [LocaleMap] in [Load].
@@ -95,8 +96,8 @@ func Load(fsys fs.FS, opts ...Option) (*LocaleMap, error) {
 		opt(l)
 	}
 
-	l.reloadLock.Lock()
-	defer l.reloadLock.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if err := l.load(); err != nil {
 		return nil, err
 	}
@@ -112,13 +113,19 @@ func Load(fsys fs.FS, opts ...Option) (*LocaleMap, error) {
 // Lookup implements
 // [github.com/mikehelmick/go-bananas/middleware.LocaleProvider].
 func (l *LocaleMap) Lookup(hints ...string) (gotext.Translator, string) {
+	// Reloading takes the write lock for the whole lookup; the normal path takes
+	// the read lock, so concurrent lookups never race a reload's replacement of
+	// data/matcher.
 	if l.reload {
-		l.reloadLock.Lock()
-		defer l.reloadLock.Unlock()
+		l.mu.Lock()
+		defer l.mu.Unlock()
 
 		if err := l.load(); err != nil {
 			panic(err)
 		}
+	} else {
+		l.mu.RLock()
+		defer l.mu.RUnlock()
 	}
 
 	for _, hint := range hints {
@@ -193,7 +200,7 @@ func (l *LocaleMap) canonicalize(id string) (result string, retErr error) {
 	return "", fmt.Errorf("malformed language %q", id)
 }
 
-// load reads every locale directory. Callers must hold reloadLock.
+// load reads every locale directory. Callers must hold mu's write lock.
 func (l *LocaleMap) load() error {
 	entries, err := fs.ReadDir(l.fsys, ".")
 	if err != nil {

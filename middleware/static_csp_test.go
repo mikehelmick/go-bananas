@@ -57,6 +57,21 @@ func TestConfigureStaticAssets(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("directory_requests_rejected", func(t *testing.T) {
+		t.Parallel()
+
+		// Directory paths must 404 before reaching the file server, which would
+		// otherwise emit an auto-generated listing of every asset.
+		for _, path := range []string{"/static/", "/static/css/"} {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			ConfigureStaticAssets(false)(okHandler("listing")).ServeHTTP(w, req)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("GET %s = %d, want 404", path, w.Code)
+			}
+		}
+	})
 }
 
 func TestContentSecurityPolicy(t *testing.T) {

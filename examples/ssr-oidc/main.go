@@ -166,8 +166,11 @@ func (a *app) router() http.Handler {
 	r.Use(middleware.ContentSecurityPolicy(csp))
 	r.Use(middleware.GzipResponse())
 	r.Use(middleware.RequireSession(a.store, nil, a.renderer))
-	// Expire sessions idle for more than 30 minutes back to the home page.
+	// Expire sessions idle for more than 30 minutes: discard the stale session
+	// (logging out any idle user) and send the visitor back to the home page,
+	// which issues a fresh session.
 	r.Use(middleware.CheckSessionIdleNoAuth(30*time.Minute, func(w http.ResponseWriter, r *http.Request) {
+		resetSession(r)
 		response.SeeOther(w, r, "/")
 	}))
 	r.Use(middleware.HandleCSRF(a.renderer))

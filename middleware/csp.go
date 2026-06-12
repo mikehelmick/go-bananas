@@ -55,9 +55,11 @@ func ContentSecurityPolicy(policy string) mux.MiddlewareFunc {
 						Warn("CSP policy uses the nonce placeholder but no nonce is on the context; " +
 							"install ProcessNonce before ContentSecurityPolicy")
 					// Drop the whole 'nonce-…' source rather than emit a guessable
-					// empty nonce.
+					// empty nonce, then tidy the whitespace the removal left behind.
 					value = strings.ReplaceAll(value, "'nonce-"+CSPNoncePlaceholder+"'", "")
 					value = strings.ReplaceAll(value, CSPNoncePlaceholder, "")
+					value = strings.Join(strings.Fields(value), " ")
+					value = strings.ReplaceAll(value, " ;", ";")
 				} else {
 					value = strings.ReplaceAll(value, CSPNoncePlaceholder, nonce)
 				}

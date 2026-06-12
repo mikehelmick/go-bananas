@@ -53,11 +53,14 @@ r.Handle("/readyz", server.ReadyzHandler(map[string]func(context.Context) error{
 ```
 
 `ReadyzHandler` runs every named check with the request context. If all pass it
-responds `200 {"status":"ok"}`; otherwise `503` with the failing checks:
+responds `200 {"status":"ok"}`; otherwise `503` listing the failing check
+names — error details are logged server-side and never returned in the body, so
+a publicly-reachable probe can't leak internal hostnames or paths:
 
 ```json
-{"status":"unavailable","failed":{"database":"connection refused"}}
+{"status":"unavailable","failed":["database"]}
 ```
 
-Checks should be fast and side-effect free; wrap slow checks in your own caching
-(the [`cache`](cache) package works well) if probes are frequent.
+A check that panics is treated as failed rather than crashing the probe. Checks
+should be fast and side-effect free; wrap slow checks in your own caching (the
+[`cache`](cache) package works well) if probes are frequent.

@@ -207,6 +207,19 @@ func TestStaticAssetsServed(t *testing.T) {
 			t.Errorf("%s returned an empty body", tc.path)
 		}
 	}
+
+	// Directory requests must 404 — never an auto-generated listing — and the
+	// non-static embedded trees must not be reachable.
+	for _, path := range []string{"/static/", "/static/css/", "/templates/home.html", "/locales/en/default.po"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_, _ = readClose(resp)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, resp.StatusCode)
+		}
+	}
 }
 
 func TestContentSecurityPolicyHeader(t *testing.T) {
