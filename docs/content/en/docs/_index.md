@@ -19,6 +19,7 @@ packages rather than a single monolith, so you import only what you need.
 | [`middleware`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/middleware) | Composable `gorilla/mux` middleware + the `Authenticator` seam |
 | [`session`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/session) · [`flash`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/flash) · [`cookiestore`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/cookiestore) | Typed session accessors, one-shot flash messages, hot-reloadable cookie store |
 | [`webctx`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/webctx) · [`response`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/response) | Request-scoped context helpers and HTTP response/error helpers |
+| [`i18n`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/i18n) | gettext (`.po`) translations with Accept-Language matching |
 
 **Infrastructure layer**
 

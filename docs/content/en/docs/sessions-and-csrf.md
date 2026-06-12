@@ -36,7 +36,9 @@ nil-safe.
 ### Idle timeout
 
 `CheckSessionIdleNoAuth` enforces an idle timeout on routes that have no other
-auth check. You supply the handler to run when the session is idle:
+auth check (the [example app](https://github.com/mikehelmick/go-bananas/tree/main/examples/ssr-oidc)
+wires a 30-minute timeout). You supply the handler to run when the session is
+idle:
 
 ```go
 r.Use(middleware.CheckSessionIdleNoAuth(30*time.Minute, func(w http.ResponseWriter, req *http.Request) {

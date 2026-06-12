@@ -39,3 +39,28 @@ return srv.ServeHTTP(ctx, &http.Server{
 Observability is intentionally **not** built in — wrap your handler with whatever
 tracing/metrics middleware you use before passing it in. Shutdown errors are
 aggregated with the standard library's `errors.Join`.
+
+## Health endpoints
+
+The package ships Kubernetes-style probe handlers:
+
+```go
+r.Handle("/healthz", server.HealthzHandler())   // liveness: always 200 {"status":"ok"}
+
+r.Handle("/readyz", server.ReadyzHandler(map[string]func(context.Context) error{
+	"database": func(ctx context.Context) error { return db.PingContext(ctx) },
+}))
+```
+
+`ReadyzHandler` runs every named check with the request context. If all pass it
+responds `200 {"status":"ok"}`; otherwise `503` listing the failing check
+names — error details are logged server-side and never returned in the body, so
+a publicly-reachable probe can't leak internal hostnames or paths:
+
+```json
+{"status":"unavailable","failed":["database"]}
+```
+
+A check that panics is treated as failed rather than crashing the probe. Checks
+should be fast and side-effect free; wrap slow checks in your own caching (the
+[`cache`](cache) package works well) if probes are frequent.

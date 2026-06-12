@@ -4,10 +4,13 @@ A small but complete server-side-rendered application built with
 [go-bananas](https://github.com/mikehelmick/go-bananas). It demonstrates how the
 web and infrastructure layers compose:
 
-- the recommended **middleware chain** (recovery, request/trace IDs, logging,
-  secure headers, gzip, sessions, CSRF, template variables, current path, locale);
-- **HTML rendering** from an `embed.FS` with SRI-tagged `static/` assets and
-  hot-reload in dev mode;
+- the recommended **middleware chain** (recovery, request/trace IDs, request
+  logging, secure headers, a nonce'd **Content-Security-Policy**, gzip, sessions
+  with an idle timeout, CSRF, template variables, current path, locale);
+- **HTML rendering** from an `embed.FS` with SRI-tagged, cache-controlled
+  `static/` assets and hot-reload in dev mode;
+- **internationalization** via the `i18n` package (gettext `.po` files under
+  `locales/`; try `/?lang=es`);
 - a **CSRF-protected form** using the post/redirect/get pattern with one-shot
   **flash messages**;
 - a **JSON** endpoint;
@@ -24,8 +27,8 @@ dependencies out of the core go-bananas module graph.
 
 ```sh
 cd examples/ssr-oidc
-go run .
-# then open http://localhost:8080
+DEV_MODE=true go run .
+# then open http://localhost:8080  (try /?lang=es for the Spanish translation)
 ```
 
 Configuration is via environment variables (all optional):
@@ -33,7 +36,7 @@ Configuration is via environment variables (all optional):
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8080` | Listen port |
-| `DEV_MODE` | `true` | Template hot-reload, relaxed HTTPS, dev login, debug errors |
+| `DEV_MODE` | `false` | Template hot-reload, relaxed HTTPS, dev login, debug errors — opt in explicitly for local development |
 | `BUILD_ID` | `dev` | Asset cache-busting query string |
 | `SECRETS_DIR` | `./local-secrets` | Where the generated cookie key is stored |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -48,9 +51,12 @@ On first run a random 64-byte cookie key is generated and written under
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/` | Home page: CSRF form + flash messages |
+| GET | `/` | Home page: CSRF form + flash messages (localized; `?lang=es`) |
 | POST | `/submit` | CSRF-protected; sets a flash, redirects to `/` |
-| GET | `/api/health` | JSON health check |
+| GET | `/static/...` | Embedded assets with cache headers and SRI tags |
+| GET | `/healthz` | Liveness probe (`server.HealthzHandler`) |
+| GET | `/readyz` | Readiness probe with pluggable checks (`server.ReadyzHandler`) |
+| GET | `/api/health` | JSON health check (app-level demo) |
 | GET | `/login` | Start OIDC sign-in (or a notice if unconfigured) |
 | GET | `/auth/callback` | OIDC callback |
 | GET | `/me` | Protected by `RequireAuthenticated` |

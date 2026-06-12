@@ -52,6 +52,10 @@ func main() {
 		h.RenderHTML(w, "home", m)
 	})
 
+	// Serve the embedded static assets the renderer's SRI tags point at.
+	static := middleware.ConfigureStaticAssets(true)
+	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+
 	srv, err := server.New("8080")
 	if err != nil {
 		panic(err)

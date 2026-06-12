@@ -17,6 +17,7 @@ package middleware_test
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing/fstest"
 
 	"github.com/gorilla/mux"
@@ -59,4 +60,20 @@ func ExampleRecovery() {
 
 	fmt.Println("router configured")
 	// Output: router configured
+}
+
+// ExampleContentSecurityPolicy sets a static policy. To include a per-request
+// nonce, add the {{nonce}} placeholder and install ProcessNonce first:
+// "script-src 'self' 'nonce-{{nonce}}'".
+func ExampleContentSecurityPolicy() {
+	h := middleware.ContentSecurityPolicy("default-src 'self'; object-src 'none'")(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	fmt.Println(w.Header().Get("Content-Security-Policy"))
+	// Output: default-src 'self'; object-src 'none'
 }

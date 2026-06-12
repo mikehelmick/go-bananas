@@ -176,3 +176,100 @@ func readClose(resp *http.Response) (string, error) {
 	b, err := io.ReadAll(resp.Body)
 	return string(b), err
 }
+
+func TestStaticAssetsServed(t *testing.T) {
+	srv, client := newTestServer(t)
+
+	cases := []struct {
+		path     string
+		wantType string
+	}{
+		{"/static/css/app.css", "text/css"},
+		{"/static/js/app.js", "text/javascript"},
+	}
+
+	for _, tc := range cases {
+		resp, err := client.Get(srv.URL + tc.path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", tc.path, err)
+		}
+		body, _ := readClose(resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200 (the SRI tags point here)", tc.path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, tc.wantType) {
+			t.Errorf("%s content-type = %q, want prefix %q", tc.path, ct, tc.wantType)
+		}
+		if resp.Header.Get("Cache-Control") == "" {
+			t.Errorf("%s missing Cache-Control header", tc.path)
+		}
+		if len(body) == 0 {
+			t.Errorf("%s returned an empty body", tc.path)
+		}
+	}
+
+	// Directory requests must 404 — never an auto-generated listing — and the
+	// non-static embedded trees must not be reachable.
+	for _, path := range []string{"/static/", "/static/css/", "/templates/home.html", "/locales/en/default.po"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_, _ = readClose(resp)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestContentSecurityPolicyHeader(t *testing.T) {
+	srv, client := newTestServer(t)
+
+	resp, err := client.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = readClose(resp)
+
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") {
+		t.Errorf("CSP = %q, want default-src 'self'", csp)
+	}
+	if !strings.Contains(csp, "'nonce-") || strings.Contains(csp, "{{nonce}}") {
+		t.Errorf("CSP = %q, want a substituted per-request nonce", csp)
+	}
+}
+
+func TestHealthEndpoints(t *testing.T) {
+	srv, client := newTestServer(t)
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := readClose(resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		if !strings.Contains(body, `"status":"ok"`) {
+			t.Errorf("%s body = %q", path, body)
+		}
+	}
+}
+
+func TestLocaleSwitching(t *testing.T) {
+	srv, client := newTestServer(t)
+
+	// Default English.
+	_, body := get(t, client, srv.URL+"/")
+	if !strings.Contains(body, "Leave a message") {
+		t.Errorf("default page missing English label:\n%s", body)
+	}
+
+	// ?lang=es switches to the Spanish translation from locales/es/default.po.
+	_, body = get(t, client, srv.URL+"/?lang=es")
+	if !strings.Contains(body, "Deja un mensaje") {
+		t.Errorf("?lang=es page missing Spanish label:\n%s", body)
+	}
+}
