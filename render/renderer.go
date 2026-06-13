@@ -53,6 +53,7 @@ var allowedResponseCodes = map[int]struct{}{
 	http.StatusConflict:              {},
 	http.StatusPreconditionFailed:    {},
 	http.StatusRequestEntityTooLarge: {},
+	http.StatusUnprocessableEntity:   {},
 	http.StatusTooManyRequests:       {},
 	http.StatusInternalServerError:   {},
 }

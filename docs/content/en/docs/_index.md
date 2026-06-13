@@ -16,6 +16,7 @@ packages rather than a single monolith, so you import only what you need.
 | Package | Purpose |
 |---|---|
 | [`render`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/render) | `html/template` + `text/template` renderer with a rich FuncMap and SRI asset tags |
+| [`form`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/form) | Bind, validate, and re-render HTML forms with preserved input and inline errors |
 | [`middleware`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/middleware) | Composable `gorilla/mux` middleware + the `Authenticator` seam |
 | [`session`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/session) · [`flash`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/flash) · [`cookiestore`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/cookiestore) | Typed session accessors, one-shot flash messages, hot-reloadable cookie store |
 | [`webctx`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/webctx) · [`response`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/response) | Request-scoped context helpers and HTTP response/error helpers |
@@ -29,6 +30,10 @@ packages rather than a single monolith, so you import only what you need.
 | [`secrets`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/secrets) · [`keys`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/keys) | Pluggable secret and key managers (filesystem/in-memory core; cloud opt-in) |
 | [`cache`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/cache) | Generic, TTL-based in-memory cache |
 | [`logging`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/logging) | Context-scoped `log/slog` logger |
+
+Cross-cutting guides cover [Forms](forms) (the bind/validate/re-render loop) and
+[Configuration](configuration) (composing per-package env-tagged `Config`
+structs with go-envconfig).
 
 These guides walk through each area. For the complete, always-current API, see
 [pkg.go.dev](https://pkg.go.dev/github.com/mikehelmick/go-bananas) — every

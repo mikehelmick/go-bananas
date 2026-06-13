@@ -213,6 +213,9 @@ func TestAllowedResponseCode(t *testing.T) {
 	if !r.AllowedResponseCode(http.StatusOK) {
 		t.Error("200 should be allowed")
 	}
+	if !r.AllowedResponseCode(http.StatusUnprocessableEntity) {
+		t.Error("422 should be allowed (form validation failures)")
+	}
 	if r.AllowedResponseCode(http.StatusTeapot) {
 		t.Error("418 should not be allowed")
 	}

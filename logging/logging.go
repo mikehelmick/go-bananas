@@ -31,6 +31,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sethvargo/go-envconfig"
 )
 
 // contextKey is a private type to prevent collisions in the context map.
@@ -62,13 +64,46 @@ func NewLogger(level slog.Level, development bool) *slog.Logger {
 	return slog.New(handler)
 }
 
+// Config controls logger construction from the environment. The struct tags are
+// compatible with [github.com/sethvargo/go-envconfig].
+type Config struct {
+	// Level is the minimum log level ("debug", "info", "warn"/"warning", or
+	// "error"). Unrecognized values fall back to info (see [LevelFromString]).
+	Level string `env:"LOG_LEVEL, default=info"`
+
+	// Mode selects the output format. "development" produces human-readable text
+	// output; any other value (including the "production" default) produces
+	// structured JSON.
+	Mode string `env:"LOG_MODE, default=production"`
+}
+
+// NewLoggerFromConfig builds a *slog.Logger from c. The Level is resolved via
+// [LevelFromString] and a Mode of "development" (case-insensitive, trimmed)
+// selects the text handler; any other Mode selects the JSON handler.
+func NewLoggerFromConfig(c Config) *slog.Logger {
+	level := LevelFromString(c.Level)
+	development := strings.EqualFold(strings.TrimSpace(c.Mode), "development")
+	return NewLogger(level, development)
+}
+
 // NewLoggerFromEnv creates a new logger from the environment. It reads LOG_LEVEL
 // (debug, info, warn, or error; defaulting to info) to determine the level and
-// LOG_MODE (development for text output) to determine the output format.
+// LOG_MODE (development for text output; defaulting to production/JSON) to
+// determine the output format. Environment parsing is delegated to [Config] and
+// [NewLoggerFromConfig].
 func NewLoggerFromEnv() *slog.Logger {
-	level := LevelFromString(os.Getenv("LOG_LEVEL"))
-	development := strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_MODE")), "development")
-	return NewLogger(level, development)
+	// The Config must start as the zero value: go-envconfig only populates a
+	// field (including applying its "default=" tag) when the field is currently
+	// the zero value, so pre-seeding would suppress reading the environment.
+	//
+	// On success, the "default=" tags yield Level="info"/Mode="production". On a
+	// Process error (rare, since all fields have defaults) we proceed gracefully
+	// with whatever was populated: an empty Level resolves to info via
+	// LevelFromString and an empty Mode yields JSON output, which exactly
+	// reproduces the historical unset-environment defaults.
+	var c Config
+	_ = envconfig.Process(context.Background(), &c)
+	return NewLoggerFromConfig(c)
 }
 
 // DefaultLogger returns the process-wide default logger, constructing it from

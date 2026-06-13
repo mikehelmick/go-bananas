@@ -16,10 +16,21 @@
     {{range .flash.Warnings}}<div class="flash flash-warning">{{.}}</div>{{end}}
     {{range .flash.Alerts}}<div class="flash flash-alert">{{.}}</div>{{end}}
 
-    <form method="POST" action="/submit">
+    <form method="POST" action="/submit" novalidate>
       {{.csrfField}}
+
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" value="{{.Form.Name}}" class="{{invalidIf (.Errors.Has "name")}}" placeholder="Your name">
+      {{range .Errors.Get "name"}}<span class="error">{{.}}</span>{{end}}
+
+      <label for="email">Email</label>
+      <input id="email" type="text" name="email" value="{{.Form.Email}}" class="{{invalidIf (.Errors.Has "email")}}" placeholder="you@example.com">
+      {{range .Errors.Get "email"}}<span class="error">{{.}}</span>{{end}}
+
       <label for="message">{{tDefault .locale "Leave a message" "form.label"}}</label>
-      <input id="message" type="text" name="message" placeholder="Say something nice" required>
+      <input id="message" type="text" name="message" value="{{.Form.Message}}" class="{{invalidIf (.Errors.Has "message")}}" placeholder="Say something nice">
+      {{range .Errors.Get "message"}}<span class="error">{{.}}</span>{{end}}
+
       <button type="submit">{{tDefault .locale "Submit" "form.submit"}}</button>
     </form>
 
