@@ -33,13 +33,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/mikehelmick/go-bananas/cookiestore"
+	"github.com/mikehelmick/go-bananas/form"
 	"github.com/mikehelmick/go-bananas/i18n"
 	"github.com/mikehelmick/go-bananas/logging"
 	"github.com/mikehelmick/go-bananas/middleware"
@@ -49,6 +49,7 @@ import (
 	"github.com/mikehelmick/go-bananas/server"
 	gbsession "github.com/mikehelmick/go-bananas/session"
 	"github.com/mikehelmick/go-bananas/webctx"
+	"github.com/sethvargo/go-envconfig"
 )
 
 //go:embed templates static locales
@@ -70,16 +71,53 @@ func main() {
 	}
 }
 
+// oidcConfig holds the OpenID Connect settings, env-tagged so go-envconfig can
+// populate them as part of the composed appConfig. An empty Issuer disables the
+// OIDC flow (the login routes then report that sign-in is unavailable).
+type oidcConfig struct {
+	Issuer       string `env:"OIDC_ISSUER"`
+	ClientID     string `env:"OIDC_CLIENT_ID"`
+	ClientSecret string `env:"OIDC_CLIENT_SECRET"`
+	RedirectURL  string `env:"OIDC_REDIRECT_URL"`
+}
+
+// appConfig is the single, composed configuration for the example, processed
+// once at startup via go-envconfig. Embedding the framework's own env-tagged
+// config structs (logging.Config, secrets.Config) demonstrates how an
+// application layers its settings on top of the building blocks.
+type appConfig struct {
+	Logging logging.Config
+	Secrets secrets.Config
+	OIDC    oidcConfig
+
+	DevMode bool   `env:"DEV_MODE, default=false"`
+	Port    string `env:"PORT, default=8080"`
+	BuildID string `env:"BUILD_ID, default=dev"`
+}
+
 func realMain(ctx context.Context) error {
-	logger := logging.NewLogger(logging.LevelFromString(env("LOG_LEVEL", "info")), envBool("DEV_MODE", false))
+	var cfg appConfig
+	if err := envconfig.Process(ctx, &cfg); err != nil {
+		return fmt.Errorf("failed to process configuration: %w", err)
+	}
+
+	// secrets.Config defaults SecretsDir to the production path /var/run/secrets.
+	// This runnable example keeps its cookie key locally instead, but only when
+	// the operator did not set SECRETS_DIR — an explicit value (including
+	// /var/run/secrets) is always honored.
+	if _, ok := os.LookupEnv("SECRETS_DIR"); !ok {
+		cfg.Secrets.SecretsDir = "./local-secrets"
+	}
+
+	logger := logging.NewLoggerFromConfig(cfg.Logging)
 	ctx = logging.WithLogger(ctx, logger)
 
-	app, err := newApp(ctx)
+	app, err := newApp(ctx, &cfg)
 	if err != nil {
 		return err
 	}
 
-	srv, err := server.New(env("PORT", "8080"))
+	srv, err := server.New(cfg.Port)
 	if err != nil {
 		return err
 	}
@@ -97,15 +135,16 @@ type app struct {
 	store    sessions.Store
 	locales  *i18n.LocaleMap
 	devMode  bool
+	buildID  string
 	oidc     *OIDC // nil when OIDC is not configured
 }
 
-func newApp(ctx context.Context) (*app, error) {
-	devMode := envBool("DEV_MODE", false)
+func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
+	devMode := cfg.DevMode
 
 	renderer, err := render.New(assets,
 		render.WithDevMode(devMode),
-		render.WithBuildID(env("BUILD_ID", "dev")),
+		render.WithBuildID(cfg.BuildID),
 		render.WithLogger(logging.FromContext(ctx)),
 	)
 	if err != nil {
@@ -115,7 +154,7 @@ func newApp(ctx context.Context) (*app, error) {
 	// Source the secure-cookie keys from a secret manager, demonstrating the
 	// infra and web layers composing. Any registered secrets provider works; the
 	// filesystem provider keeps the example self-contained.
-	entropy, err := cookieEntropy(ctx, env("SECRETS_DIR", "./local-secrets"))
+	entropy, err := cookieEntropy(ctx, cfg.Secrets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set up cookie entropy: %w", err)
 	}
@@ -138,11 +177,11 @@ func newApp(ctx context.Context) (*app, error) {
 		return nil, fmt.Errorf("failed to load locales: %w", err)
 	}
 
-	a := &app{renderer: renderer, store: store, locales: locales, devMode: devMode}
+	a := &app{renderer: renderer, store: store, locales: locales, devMode: devMode, buildID: cfg.BuildID}
 
-	if issuer := env("OIDC_ISSUER", ""); issuer != "" {
-		oidc, err := NewOIDC(ctx, renderer, issuer,
-			env("OIDC_CLIENT_ID", ""), env("OIDC_CLIENT_SECRET", ""), env("OIDC_REDIRECT_URL", ""))
+	if cfg.OIDC.Issuer != "" {
+		oidc, err := NewOIDC(ctx, renderer, cfg.OIDC.Issuer,
+			cfg.OIDC.ClientID, cfg.OIDC.ClientSecret, cfg.OIDC.RedirectURL)
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +215,7 @@ func (a *app) router() http.Handler {
 	r.Use(middleware.HandleCSRF(a.renderer))
 	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{
 		ServerName: "go-bananas",
-		BuildID:    env("BUILD_ID", "dev"),
+		BuildID:    a.buildID,
 		DevMode:    a.devMode,
 	}))
 	r.Use(middleware.InjectCurrentPath())
@@ -237,24 +276,54 @@ func (a *app) injectPrincipal(next http.Handler) http.Handler {
 	})
 }
 
-func (a *app) handleHome(w http.ResponseWriter, r *http.Request) {
+// messageForm is the home page's contact form. The "form" tags drive binding
+// (and become the keys of any validation Errors); the "validate" tags drive
+// declarative validation via form.Bind.
+type messageForm struct {
+	Name    string `form:"name"    validate:"required"`
+	Email   string `form:"email"   validate:"required,email"`
+	Message string `form:"message" validate:"required,min=3"`
+}
+
+// homeData builds the template data for the home page. Both the GET handler and
+// the POST handler call it so the template always sees a uniform shape: a "Form"
+// value of type messageForm and a non-nil "Errors". GET passes the zero form and
+// an empty Errors; POST passes the submitted input and any validation errors.
+func homeData(r *http.Request, in messageForm, errs form.Errors) webctx.TemplateMap {
 	m := webctx.TemplateMapFromContext(r.Context())
 	m.Title("Home")
-	a.renderer.RenderHTML(w, "home", m)
+	if errs == nil {
+		errs = form.Errors{}
+	}
+	m["Form"] = in
+	m["Errors"] = errs
+	return m
+}
+
+func (a *app) handleHome(w http.ResponseWriter, r *http.Request) {
+	a.renderer.RenderHTML(w, "home", homeData(r, messageForm{}, nil))
 }
 
 func (a *app) handleSubmit(w http.ResponseWriter, r *http.Request) {
-	session := webctx.SessionFromContext(r.Context())
-	flash := gbsession.Flash(session)
-
-	msg := strings.TrimSpace(r.FormValue("message"))
-	if msg == "" {
-		flash.Error("Message cannot be empty.")
-	} else {
-		flash.Alert("Thanks for your message: %q", msg)
+	var in messageForm
+	errs, err := form.Bind(r, &in)
+	if err != nil {
+		// Unprocessable request (oversized or malformed body): 400.
+		response.BadRequest(w, r, a.renderer)
+		return
 	}
 
-	// Post/redirect/get: the flash survives the redirect and shows once.
+	if errs.Any() {
+		// Invalid input: re-render the form with the user's input preserved and
+		// the per-field errors shown inline, at 422 Unprocessable Entity — the
+		// conventional status for a form that failed validation.
+		a.renderer.RenderHTMLStatus(w, http.StatusUnprocessableEntity, "home", homeData(r, in, errs))
+		return
+	}
+
+	// Valid: surface a one-shot success flash and post/redirect/get home.
+	gbsession.Flash(webctx.SessionFromContext(r.Context())).
+		Alert("Thanks for your message, %s!", in.Name)
 	response.SeeOther(w, r, "/")
 }
 
@@ -292,7 +361,16 @@ func (a *app) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 // cookieEntropy returns an EntropyFunc backed by a secret manager. On first run
 // it generates a 64-byte key and persists it; thereafter the same key is read
 // back, so sessions survive restarts.
-func cookieEntropy(ctx context.Context, secretsDir string) (cookiestore.EntropyFunc, error) {
+//
+// It consumes the framework's secrets.Config: the directory holding the cookie
+// key is taken from cfg.SecretsDir (already resolved by the caller), and the
+// filesystem secret manager is rooted at the same directory.
+func cookieEntropy(ctx context.Context, cfg secrets.Config) (cookiestore.EntropyFunc, error) {
+	secretsDir := cfg.SecretsDir
+	if secretsDir == "" {
+		secretsDir = "./local-secrets"
+	}
+
 	if err := os.MkdirAll(secretsDir, 0o700); err != nil {
 		return nil, err
 	}
@@ -309,7 +387,10 @@ func cookieEntropy(ctx context.Context, secretsDir string) (cookiestore.EntropyF
 		}
 	}
 
-	sm, err := secrets.NewFilesystem(ctx, &secrets.Config{FilesystemRoot: secretsDir})
+	// Reuse the caller's secrets.Config but pin the filesystem root to the
+	// resolved directory so the provider reads back the key written above.
+	cfg.FilesystemRoot = secretsDir
+	sm, err := secrets.NewFilesystem(ctx, &cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -325,19 +406,4 @@ func cookieEntropy(ctx context.Context, secretsDir string) (cookiestore.EntropyF
 		}
 		return [][]byte{key}, nil
 	}, nil
-}
-
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func envBool(key string, def bool) bool {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-	return v == "1" || strings.EqualFold(v, "true")
 }

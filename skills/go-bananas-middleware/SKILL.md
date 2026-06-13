@@ -44,6 +44,10 @@ Hard ordering rules:
 - **`ContentSecurityPolicy` after `ProcessNonce`** — the `{{nonce}}` placeholder is
   filled with the same nonce templates read from the context.
 - **`HandleCSRF` after `RequireSession`** — the CSRF token lives on the session.
+  `HandleCSRF` only validates the token; the `form` package
+  (`github.com/mikehelmick/go-bananas/form`) handles the parse → validate →
+  re-render loop for a POST and **coexists** with it — forms still need
+  `{{ .csrfField }}`. See the `go-bananas-scaffold` skill for the loop.
 - **`PopulateTemplateVariables` after the session middleware** — flash and CSRF
   helpers must already be on the template map.
 
@@ -61,6 +65,14 @@ Hard ordering rules:
   `RequireSession`.
 - **CSP header contains `{{nonce}}` literally:** `ContentSecurityPolicy` was
   installed before `ProcessNonce` (or `ProcessNonce` is missing).
+- **`form.Bind` failure handled wrong:** it returns `(form.Errors, error)` with
+  two distinct modes — a non-nil **`error`** is an unprocessable request (bad
+  content-type / oversized body) → respond **400**; **`errs.Any()`** is invalid
+  input → re-render at **422**. Don't collapse them into one branch.
+- **Unchecked checkbox (accept-terms) never errors:** an unchecked HTML checkbox
+  sends no value, so a `bool` field stays `false` and tag validation can't flag
+  it. Enforce it with a `Validate() form.Errors` method on the struct
+  (the `form.Validator` interface) instead.
 
 ## Optional middleware
 

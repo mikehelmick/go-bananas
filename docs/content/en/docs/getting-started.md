@@ -78,5 +78,9 @@ With a `templates/home.html` containing:
   headers, sessions, and CSRF in the right order.
 - [Rendering & templates](rendering-templates) — the FuncMap, SRI asset tags, and
   hot reload.
+- [Forms](forms) — bind, validate, and re-render an HTML form with preserved
+  input and inline errors.
+- [Configuration](configuration) — compose per-package env-tagged `Config`
+  structs with go-envconfig.
 - The runnable [`examples/ssr-oidc`](https://github.com/mikehelmick/go-bananas/tree/main/examples/ssr-oidc)
   application ties everything together, including OIDC.
