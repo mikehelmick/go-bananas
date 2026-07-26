@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/sessions v1.4.0
 	github.com/mikehelmick/go-bananas v0.0.0
-	github.com/sethvargo/go-envconfig v1.4.2
+	github.com/sethvargo/go-envconfig v1.4.3
 	golang.org/x/oauth2 v0.36.0
 )
 
@@ -25,8 +25,8 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/leonelquinteros/gotext v1.7.2 // indirect
 	github.com/unrolled/secure v1.17.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )
 
