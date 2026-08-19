@@ -35,6 +35,19 @@ r.RenderJSON(w, http.StatusOK, payload)       // payload, error, or []error
 r.RenderCSV(w, http.StatusOK, "report.csv", marshaler)
 ```
 
+Status codes passed to `RenderHTMLStatus` must be in the renderer's allow-list
+(200, 400, 401, 403, 404, 405, 409, 412, 413, 422, 429, 500) — anything else is
+refused with a 500, so a typo cannot ship an unexpected status. Check with
+`r.AllowedResponseCode(code)`.
+
+The [`response`](https://pkg.go.dev/github.com/mikehelmick/go-bananas/response)
+package wraps the common error statuses and negotiates HTML vs JSON vs plain
+text from the request's `Accept`/`Content-Type`: `response.BadRequest`,
+`Unauthorized` (no or invalid credentials), `Forbidden` (authenticated but not
+permitted), `NotFound`, and `InternalError`. Each renders the like-named
+template (`"400"`, `"401"`, `"403"`, `"404"`, `"500"`) for HTML clients, so
+provide all five.
+
 `RenderJSON` special-cases errors: a single `error` renders as `{"error":"…"}`,
 and a joined error (from `errors.Join`) or `[]error` renders as
 `{"errors":[…]}`.

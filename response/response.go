@@ -30,6 +30,7 @@ import (
 var (
 	errBadRequest     = errors.New("bad request")
 	errUnauthorized   = errors.New("unauthorized")
+	errForbidden      = errors.New("forbidden")
 	errNotFound       = errors.New("not found")
 	errMissingSession = errors.New("session missing in request context")
 )
@@ -102,9 +103,12 @@ func NotFound(w http.ResponseWriter, r *http.Request, h *render.Renderer) {
 	}
 }
 
-// Unauthorized renders a 401 response negotiated for the client. The framework
-// always returns 401 (even when authentication is present but authorization
-// fails).
+// Unauthorized renders a 401 response negotiated for the client. Use it when the
+// request presented no (or invalid) credentials; when the caller is
+// authenticated but lacks permission for the resource, use [Forbidden] instead.
+//
+// The framework's own middleware always returns 401, since it only ever
+// authenticates; authorization is the application's concern.
 func Unauthorized(w http.ResponseWriter, r *http.Request, h *render.Renderer) {
 	accept := acceptList(r)
 	switch {
@@ -116,6 +120,26 @@ func Unauthorized(w http.ResponseWriter, r *http.Request, h *render.Renderer) {
 		h.RenderJSON(w, http.StatusUnauthorized, errUnauthorized)
 	default:
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+	}
+}
+
+// Forbidden renders a 403 response negotiated for the client. Use it when the
+// caller is authenticated but is not permitted to access the resource; for
+// missing or invalid credentials use [Unauthorized] instead.
+//
+// HTML clients are rendered the "403" template, so applications using this
+// helper must provide one alongside their "400"/"401"/"404"/"500" templates.
+func Forbidden(w http.ResponseWriter, r *http.Request, h *render.Renderer) {
+	accept := acceptList(r)
+	switch {
+	case prefixInList(accept, ContentTypeHTML):
+		m := webctx.TemplateMapFromContext(r.Context())
+		m.Title("%s", http.StatusText(http.StatusForbidden))
+		h.RenderHTMLStatus(w, http.StatusForbidden, "403", m)
+	case prefixInList(accept, ContentTypeJSON):
+		h.RenderJSON(w, http.StatusForbidden, errForbidden)
+	default:
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 	}
 }
 

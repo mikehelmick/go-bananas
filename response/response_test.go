@@ -30,6 +30,7 @@ func testRenderer(t *testing.T) *render.Renderer {
 	t.Helper()
 	fsys := fs.FS(fstest.MapFS{
 		"401.html": &fstest.MapFile{Data: []byte(`{{define "401"}}unauthorized page{{end}}`)},
+		"403.html": &fstest.MapFile{Data: []byte(`{{define "403"}}forbidden page{{end}}`)},
 		"404.html": &fstest.MapFile{Data: []byte(`{{define "404"}}not found page{{end}}`)},
 		"500.html": &fstest.MapFile{Data: []byte(`{{define "500"}}error page{{end}}`)},
 		"400.html": &fstest.MapFile{Data: []byte(`{{define "400"}}bad request page{{end}}`)},
@@ -57,6 +58,9 @@ func TestErrorHelpers_ContentNegotiation(t *testing.T) {
 		{"unauthorized_html", Unauthorized, "text/html", http.StatusUnauthorized, "unauthorized page", "text/html"},
 		{"unauthorized_json", Unauthorized, "application/json", http.StatusUnauthorized, `{"error":"unauthorized"}`, "application/json"},
 		{"unauthorized_text", Unauthorized, "text/plain", http.StatusUnauthorized, "Unauthorized", ""},
+		{"forbidden_html", Forbidden, "text/html", http.StatusForbidden, "forbidden page", "text/html"},
+		{"forbidden_json", Forbidden, "application/json", http.StatusForbidden, `{"error":"forbidden"}`, "application/json"},
+		{"forbidden_text", Forbidden, "text/plain", http.StatusForbidden, "Forbidden", ""},
 		{"notfound_html", NotFound, "text/html", http.StatusNotFound, "not found page", "text/html"},
 		{"notfound_json", NotFound, "application/json", http.StatusNotFound, `{"error":"not found"}`, "application/json"},
 		{"badrequest_html", BadRequest, "text/html", http.StatusBadRequest, "bad request page", "text/html"},
