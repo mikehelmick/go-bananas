@@ -37,6 +37,10 @@ jobs:
         shell: bash        
         run: make test-acc
 
+      - name: go-test-examples
+        shell: bash
+        run: make test-examples
+
       - name: go-coverage
         shell: bash
         run: |-
