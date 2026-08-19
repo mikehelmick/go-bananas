@@ -1,0 +1,15 @@
+{{define "admin"}}<!doctype html>
+<html lang="{{or .textLanguage "en"}}" dir="{{or .textDirection "ltr"}}">
+<head>
+  <meta charset="utf-8">
+  <title>{{.title}}</title>
+  {{cssIncludeTag}}
+</head>
+<body>
+  <main>
+    <h1>Admin</h1>
+    <p>{{.principal.Email}} is on the admin allow-list.</p>
+    <p><a href="/">Home</a> · <a href="/me">Profile</a> · <a href="/logout">Sign out</a></p>
+  </main>
+</body>
+</html>{{end}}

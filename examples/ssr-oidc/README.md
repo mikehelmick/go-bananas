@@ -16,6 +16,9 @@ web and infrastructure layers compose:
 - a **JSON** endpoint;
 - the pluggable **`Authenticator` seam** guarding a protected `/me` route, with a
   real **OIDC** authorization-code flow (`coreos/go-oidc` + `x/oauth2`);
+- **authorization layered on top of authentication**: an `/admin` route that
+  answers 401 when anonymous and 403 (`response.Forbidden`) when signed in
+  without the role;
 - **secure-cookie sessions** whose keys are sourced from a `secrets` manager,
   showing the infra and web layers composing.
 
@@ -42,6 +45,7 @@ Configuration is via environment variables (all optional):
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `OIDC_ISSUER` | _(unset)_ | OIDC discovery URL; when set, enables `/login` |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | | OIDC client config |
+| `ADMIN_EMAILS` | _(unset)_ | Comma-separated allow-list for `/admin`; unset means nobody is an admin, so `/admin` answers 403 |
 
 On first run a random 64-byte cookie key is generated and written under
 `SECRETS_DIR`, then read back through `secrets.NewFilesystem` on every request via
@@ -60,6 +64,7 @@ On first run a random 64-byte cookie key is generated and written under
 | GET | `/login` | Start OIDC sign-in (or a notice if unconfigured) |
 | GET | `/auth/callback` | OIDC callback |
 | GET | `/me` | Protected by `RequireAuthenticated` |
+| GET | `/admin` | Also authorized: 401 anonymous, 403 unless the user is in `ADMIN_EMAILS` |
 | GET | `/logout` | Clear the session user |
 | POST | `/dev/login` | Dev-only: sign in as a fake user (CSRF-protected) |
 
@@ -71,13 +76,32 @@ so you can exercise the protected `/me` route without standing up an identity
 provider. To try the real flow, point `OIDC_ISSUER` at any compliant provider and
 set the client variables.
 
+## 401 vs 403
+
+`RequireAuthenticated` answers *who is this?*; it has no opinion about *may they
+do this?*. Authorization is the application's own check, so `/admin` adds a
+second middleware (`requireAdmin` in [`main.go`](./main.go)) that denies with
+`response.Forbidden`:
+
+```sh
+DEV_MODE=true go run .                            # signed in, not an admin -> 403
+ADMIN_EMAILS=dev@example.com DEV_MODE=true go run .   # signed in as an admin -> 200
+```
+
+Both statuses negotiate on `Accept`: browsers get the `403.html` template, JSON
+clients get `{"error":"forbidden"}`. Prefer `response.NotFound` over `Forbidden`
+when the existence of the resource is itself privileged, as in a cross-tenant
+lookup.
+
 ## Tests
 
 [`e2e_test.go`](./e2e_test.go) drives the assembled router through an
 `httptest.Server`: it asserts the home page renders the CSRF meta tag and SRI
 asset tags, that a POST without a token is rejected with 401 while a POST with a
 token succeeds and surfaces a one-shot flash, that the JSON endpoint works, and
-that the protected route returns 401 until the user signs in.
+that the protected route returns 401 until the user signs in, and that `/admin`
+returns 401 anonymous, 403 for a signed-in non-admin, and 200 once the user is on
+the allow-list.
 
 ```sh
 go test ./...
