@@ -14,8 +14,8 @@ cookie session store, and the graceful server.
 1. **Add the dependency:** `go get github.com/mikehelmick/go-bananas@latest`
 2. **Create an `embed.FS`** containing `templates/*.html` and `static/js`,
    `static/css`. Template names come from `{{ define "name" }}`. Always provide
-   `400.html`, `401.html`, `404.html`, and `500.html` — the error helpers render
-   them.
+   `400.html`, `401.html`, `403.html`, `404.html`, and `500.html` — the error
+   helpers render them.
 3. **Build the renderer** with options (dev mode, build id, logger).
 4. **Build a session store** with `cookiestore.New` (see the
    `go-bananas-secrets` skill to source keys from a secret manager).

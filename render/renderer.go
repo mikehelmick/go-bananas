@@ -48,6 +48,7 @@ var allowedResponseCodes = map[int]struct{}{
 	http.StatusOK:                    {},
 	http.StatusBadRequest:            {},
 	http.StatusUnauthorized:          {},
+	http.StatusForbidden:             {},
 	http.StatusNotFound:              {},
 	http.StatusMethodNotAllowed:      {},
 	http.StatusConflict:              {},

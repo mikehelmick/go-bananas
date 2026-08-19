@@ -15,9 +15,10 @@
 // Package response provides HTTP response and error helpers that negotiate
 // between HTML and JSON based on the request's Accept and Content-Type headers.
 //
-// The error helpers ([InternalError], [Unauthorized], [BadRequest], [NotFound],
-// [MissingSession]) delegate to a [github.com/mikehelmick/go-bananas/render.Renderer]
-// to render the appropriate "401"/"404"/"500" template for HTML clients or a
+// The error helpers ([InternalError], [Unauthorized], [Forbidden], [BadRequest],
+// [NotFound], [MissingSession]) delegate to a
+// [github.com/mikehelmick/go-bananas/render.Renderer] to render the appropriate
+// "400"/"401"/"403"/"404"/"500" template for HTML clients or a
 // `{"error":...}` body for JSON clients, falling back to plain text otherwise.
 package response
 

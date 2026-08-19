@@ -27,6 +27,23 @@ me.HandleFunc("/me", profile)
 On success the principal is stored on the context; read it anywhere with
 `webctx.PrincipalFromContext(ctx)` (type-assert to your own user type).
 
+## Authorization (403 vs 401)
+
+`RequireAuthenticated` only answers "who is this?" — permission checks belong in
+your handlers or your own middleware. Once a principal exists, deny with 403,
+not 401:
+
+```go
+if !user.CanAdminister(course) {
+	response.Forbidden(w, r, h) // renders the "403" template / {"error":"forbidden"}
+	return
+}
+```
+
+Use `response.Unauthorized` only for missing or invalid credentials. Ship a
+`403.html` template alongside `401.html`, or use `response.NotFound` when the
+existence of the resource is itself privileged (cross-tenant lookups).
+
 ## Session-backed authenticator
 
 The simplest implementation reads a user that a login flow stored on the session:
