@@ -77,6 +77,22 @@ test-acc:
 		-coverprofile=./coverage.out
 .PHONY: test-acc
 
+# test-examples builds and tests the nested example modules. They are separate
+# modules that use a local replace of the framework, so the root module's
+# ./... does not cover them and dependabot cannot see the drift a framework
+# dependency bump causes in their go.mod.
+test-examples:
+	@for mod in $$(find ./examples -name go.mod); do \
+		dir="$$(dirname $$mod)"; \
+		echo "==> $$dir"; \
+		(cd "$$dir" && go build ./... && go test \
+			-count=1 \
+			-shuffle=on \
+			-timeout=5m \
+			./...) || exit 1; \
+	done
+.PHONY: test-examples
+
 test-coverage:
 	@go tool cover -func=./coverage.out
 .PHONY: test-coverage

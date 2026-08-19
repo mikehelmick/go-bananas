@@ -27,7 +27,7 @@ require (
 	github.com/unrolled/secure v1.17.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
 
 replace github.com/mikehelmick/go-bananas => ../..
