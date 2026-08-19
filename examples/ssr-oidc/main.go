@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -90,6 +91,11 @@ type appConfig struct {
 	Secrets secrets.Config
 	OIDC    oidcConfig
 
+	// AdminEmails is the allow-list backing the /admin route's authorization
+	// check. Comma-separated; empty (the default) means nobody is an admin, so
+	// a signed-in user hitting /admin gets a 403.
+	AdminEmails []string `env:"ADMIN_EMAILS"`
+
 	DevMode bool   `env:"DEV_MODE, default=false"`
 	Port    string `env:"PORT, default=8080"`
 	BuildID string `env:"BUILD_ID, default=dev"`
@@ -137,6 +143,9 @@ type app struct {
 	devMode  bool
 	buildID  string
 	oidc     *OIDC // nil when OIDC is not configured
+
+	// admins is the set of email addresses permitted on the /admin route.
+	admins map[string]struct{}
 }
 
 func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
@@ -177,7 +186,21 @@ func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
 		return nil, fmt.Errorf("failed to load locales: %w", err)
 	}
 
-	a := &app{renderer: renderer, store: store, locales: locales, devMode: devMode, buildID: cfg.BuildID}
+	admins := make(map[string]struct{}, len(cfg.AdminEmails))
+	for _, e := range cfg.AdminEmails {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			admins[e] = struct{}{}
+		}
+	}
+
+	a := &app{
+		renderer: renderer,
+		store:    store,
+		locales:  locales,
+		devMode:  devMode,
+		buildID:  cfg.BuildID,
+		admins:   admins,
+	}
 
 	if cfg.OIDC.Issuer != "" {
 		oidc, err := NewOIDC(ctx, renderer, cfg.OIDC.Issuer,
@@ -255,6 +278,15 @@ func (a *app) router() http.Handler {
 	me.Use(middleware.RequireAuthenticated(SessionAuthenticator{}, a.renderer))
 	me.HandleFunc("/me", a.handleMe).Methods(http.MethodGet)
 
+	// Authorization sits a layer above authentication: RequireAuthenticated
+	// answers "who is this?", requireAdmin answers "may they do this?". An
+	// anonymous request to /admin is a 401 (no credentials); a signed-in
+	// non-admin is a 403 (authenticated, but not permitted).
+	admin := r.NewRoute().Subrouter()
+	admin.Use(middleware.RequireAuthenticated(SessionAuthenticator{}, a.renderer))
+	admin.Use(a.requireAdmin)
+	admin.HandleFunc("/admin", a.handleAdmin).Methods(http.MethodGet)
+
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		response.NotFound(w, req, a.renderer)
 	})
@@ -274,6 +306,37 @@ func (a *app) injectPrincipal(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireAdmin rejects signed-in users who are not on the admin allow-list. It
+// runs after RequireAuthenticated, so a principal is always present; the check
+// is the application's own, since the framework only authenticates.
+//
+// This is the pattern to copy for any role or tenancy gate: deny with
+// response.Forbidden (403), not Unauthorized (401). Use 404 instead when the
+// existence of the resource is itself privileged, as in a cross-tenant lookup.
+func (a *app) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, _ := webctx.PrincipalFromContext(r.Context()).(*User)
+		if u == nil || !a.isAdmin(u) {
+			response.Forbidden(w, r, a.renderer)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isAdmin reports whether u is on the configured admin allow-list. A real
+// application would consult its own role or membership store.
+func (a *app) isAdmin(u *User) bool {
+	_, ok := a.admins[strings.ToLower(u.Email)]
+	return ok
+}
+
+func (a *app) handleAdmin(w http.ResponseWriter, r *http.Request) {
+	m := webctx.TemplateMapFromContext(r.Context())
+	m.Title("Admin")
+	a.renderer.RenderHTML(w, "admin", m)
 }
 
 // messageForm is the home page's contact form. The "form" tags drive binding

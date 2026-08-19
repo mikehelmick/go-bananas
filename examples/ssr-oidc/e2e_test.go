@@ -32,12 +32,15 @@ var csrfInputRe = regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
 
 // newTestServer builds the app against a temp secrets dir in dev mode and serves
 // it. It returns the server and a cookie-jar client.
-func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
+func newTestServer(t *testing.T, env ...[2]string) (*httptest.Server, *http.Client) {
 	t.Helper()
 
 	t.Setenv("SECRETS_DIR", t.TempDir())
 	t.Setenv("DEV_MODE", "true")
 	t.Setenv("OIDC_ISSUER", "") // disable OIDC for a hermetic test
+	for _, kv := range env {
+		t.Setenv(kv[0], kv[1])
+	}
 
 	// Process configuration from the environment exactly as the binary does, so
 	// the t.Setenv values above take effect at app-construction time.
@@ -62,6 +65,25 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 func get(t *testing.T, c *http.Client, url string) (int, string) {
 	t.Helper()
 	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// getHTML issues a request that announces it accepts HTML, the way a browser
+// does. The response helpers negotiate on Accept, so this is what exercises the
+// error templates rather than their plain-text fallback.
+func getHTML(t *testing.T, c *http.Client, url string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("NewRequest %s: %v", url, err)
+	}
+	req.Header.Set("Accept", "text/html")
+	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -258,6 +280,91 @@ func TestProtectedRouteRequiresAuth(t *testing.T) {
 	}
 	if !strings.Contains(body, "Dev User") {
 		t.Errorf("expected the profile page to show the dev user, got:\n%s", body)
+	}
+}
+
+// devLogin signs in as the dev user (dev@example.com) and returns the body of
+// the page the login redirects to.
+func devLogin(t *testing.T, srv *httptest.Server, client *http.Client) string {
+	t.Helper()
+
+	_, home := get(t, client, srv.URL+"/")
+	m := csrfInputRe.FindStringSubmatch(home)
+	if m == nil {
+		t.Fatal("could not find a csrf token on the home page")
+	}
+
+	resp, err := client.PostForm(srv.URL+"/dev/login", url.Values{"csrf_token": {m[1]}})
+	if err != nil {
+		t.Fatalf("POST /dev/login: %v", err)
+	}
+	body, _ := readClose(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dev login final status = %d, want 200", resp.StatusCode)
+	}
+	return body
+}
+
+// TestAdminRouteAuthorization exercises the 401-vs-403 distinction on a single
+// route: no credentials is a 401, and a signed-in user who is not on the admin
+// allow-list is a 403.
+func TestAdminRouteAuthorization(t *testing.T) {
+	srv, client := newTestServer(t)
+
+	// Anonymous: authentication fails first, so 401.
+	if code, _ := get(t, client, srv.URL+"/admin"); code != http.StatusUnauthorized {
+		t.Fatalf("GET /admin anonymous = %d, want 401", code)
+	}
+
+	// Signed in, but not an admin (ADMIN_EMAILS is unset): authenticated, not
+	// permitted, so 403 with the "403" template.
+	devLogin(t, srv, client)
+	code, body := getHTML(t, client, srv.URL+"/admin")
+	if code != http.StatusForbidden {
+		t.Fatalf("GET /admin as non-admin = %d, want 403", code)
+	}
+	if !strings.Contains(body, "<h1>403</h1>") {
+		t.Errorf("expected the 403 template, got:\n%s", body)
+	}
+
+	// A client that does not accept HTML gets the negotiated plain-text form.
+	code, body = get(t, client, srv.URL+"/admin")
+	if code != http.StatusForbidden {
+		t.Fatalf("GET /admin (no Accept) = %d, want 403", code)
+	}
+	if strings.TrimSpace(body) != "Forbidden" {
+		t.Errorf("plain-text 403 body = %q, want %q", strings.TrimSpace(body), "Forbidden")
+	}
+
+	// The profile route is unaffected: authorization is per-route.
+	if code, _ := get(t, client, srv.URL+"/me"); code != http.StatusOK {
+		t.Errorf("GET /me as non-admin = %d, want 200", code)
+	}
+}
+
+// TestAdminRouteAllowsAdmin is the positive half: the same user on the
+// allow-list gets through.
+func TestAdminRouteAllowsAdmin(t *testing.T) {
+	srv, client := newTestServer(t, [2]string{"ADMIN_EMAILS", "dev@example.com"})
+
+	devLogin(t, srv, client)
+	code, body := get(t, client, srv.URL+"/admin")
+	if code != http.StatusOK {
+		t.Fatalf("GET /admin as admin = %d, want 200", code)
+	}
+	if !strings.Contains(body, "dev@example.com") {
+		t.Errorf("expected the admin page to name the user, got:\n%s", body)
+	}
+}
+
+// TestAdminAllowListIsCaseInsensitive guards the normalization in isAdmin:
+// identity providers do not agree on email case.
+func TestAdminAllowListIsCaseInsensitive(t *testing.T) {
+	srv, client := newTestServer(t, [2]string{"ADMIN_EMAILS", " Dev@Example.COM "})
+
+	devLogin(t, srv, client)
+	if code, _ := get(t, client, srv.URL+"/admin"); code != http.StatusOK {
+		t.Fatalf("GET /admin with differently-cased allow-list = %d, want 200", code)
 	}
 }
 
