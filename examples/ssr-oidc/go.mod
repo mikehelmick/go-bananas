@@ -25,7 +25,7 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/leonelquinteros/gotext v1.7.2 // indirect
 	github.com/unrolled/secure v1.17.0 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 )
