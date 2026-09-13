@@ -3,12 +3,12 @@ module github.com/mikehelmick/go-bananas/examples/ssr-oidc
 go 1.26.4
 
 require (
-	github.com/coreos/go-oidc/v3 v3.20.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/sessions v1.4.0
 	github.com/mikehelmick/go-bananas v0.0.0
 	github.com/sethvargo/go-envconfig v1.4.3
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 )
 
 require (
