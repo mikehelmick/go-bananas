@@ -45,7 +45,9 @@ go run .           # then open http://localhost:8080
 
 The docs live in [`docs/`](./docs) (Hugo + Docsy via Hugo Modules) and deploy
 to [mikehelmick.github.io/go-bananas](https://mikehelmick.github.io/go-bananas)
-on merge to `main`:
+on merge to `main`. You need Hugo extended 0.166+ and
+[Dart Sass](https://sass-lang.com/install/) as `sass` on your `PATH` (the old
+Ruby Sass will not work):
 
 ```sh
 cd docs
