@@ -219,6 +219,16 @@ func (k *Filesystem) SigningKeyVersions(_ context.Context, parent string) ([]Sig
 		return nil, fmt.Errorf("failed to list signing keys: key is not a signing key type")
 	}
 
+	rootDir := k.root
+	if rootDir == "" {
+		rootDir = "."
+	}
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list signing keys: %w", err)
+	}
+	defer root.Close()
+
 	pth := filepath.Join(k.root, parent)
 	var versions []SigningKeyVersion
 	if err := filepath.Walk(pth, func(curr string, info os.FileInfo, err error) error {
@@ -229,7 +239,12 @@ func (k *Filesystem) SigningKeyVersions(_ context.Context, parent string) ([]Sig
 			return nil
 		}
 
-		b, err := os.ReadFile(curr)
+		// Read through the root so a swapped-in symlink can't escape it.
+		rel, err := filepath.Rel(rootDir, curr)
+		if err != nil {
+			return err
+		}
+		b, err := root.ReadFile(rel)
 		if err != nil {
 			return err
 		}

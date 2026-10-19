@@ -62,6 +62,7 @@ func Back(w http.ResponseWriter, r *http.Request, _ *render.Renderer) {
 		return
 	}
 
+	//nolint:gosec // G710: ref is same-host, checked above.
 	http.Redirect(w, r, ref, http.StatusSeeOther)
 }
 

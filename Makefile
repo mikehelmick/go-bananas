@@ -41,10 +41,10 @@ generate-check: generate diff-check
 # lint uses the same linter as CI and tries to report the same results running
 # locally. There is a chance that CI detects linter errors that are not found
 # locally, but it should be rare.
-GOLANGCI_LINT_VERSION = v1.64.8
+GOLANGCI_LINT_VERSION = v2.15.0
 
 lint:
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	@golangci-lint run --config .golangci.yaml
 .PHONY: lint
 

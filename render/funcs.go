@@ -149,7 +149,7 @@ func humanizeTime(i any) (string, error) {
 // primitive or implement [fmt.Stringer].
 func toStringSlice(i any) ([]string, error) {
 	t := reflect.TypeOf(i)
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
@@ -157,7 +157,7 @@ func toStringSlice(i any) ([]string, error) {
 	}
 
 	s := reflect.ValueOf(i)
-	for s.Kind() == reflect.Ptr {
+	for s.Kind() == reflect.Pointer {
 		s = s.Elem()
 	}
 

@@ -45,7 +45,8 @@ type Server struct {
 // begins. An empty port lets the operating system choose a free one.
 func New(port string) (*Server, error) {
 	addr := ":" + port
-	listener, err := net.Listen("tcp", addr)
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listener on %s: %w", addr, err)
 	}
@@ -99,7 +100,8 @@ func (s *Server) ServeHTTP(ctx context.Context, srv *http.Server) error {
 		}
 
 		logger.Debug("server.Serve: context closed, shutting down")
-		shutdownCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		// ctx is already done; detach from its cancellation but keep its values.
+		shutdownCtx, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer done()
 
 		errCh <- srv.Shutdown(shutdownCtx)
@@ -109,8 +111,8 @@ func (s *Server) ServeHTTP(ctx context.Context, srv *http.Server) error {
 	serveErr := srv.Serve(s.listener)
 	close(serveDone)
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-		<-errCh // let the goroutine finish
-		return fmt.Errorf("failed to serve: %w", serveErr)
+		// Wait for the goroutine and keep any shutdown error alongside.
+		return errors.Join(fmt.Errorf("failed to serve: %w", serveErr), <-errCh)
 	}
 
 	logger.Debug("server.Serve: serving stopped")
