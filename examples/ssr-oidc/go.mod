@@ -1,6 +1,6 @@
 module github.com/mikehelmick/go-bananas/examples/ssr-oidc
 
-go 1.26.4
+go 1.27
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
@@ -13,21 +13,21 @@ require (
 
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
-	github.com/go-playground/locales v0.14.1 // indirect
-	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.30.3 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
+	github.com/go-playground/locales v0.14.2 // indirect
+	github.com/go-playground/universal-translator v0.18.2 // indirect
+	github.com/go-playground/validator/v10 v10.30.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
-	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/leonelquinteros/gotext v1.7.2 // indirect
+	github.com/leodido/go-urn v1.5.0 // indirect
+	github.com/leonelquinteros/gotext v1.8.0 // indirect
 	github.com/unrolled/secure v1.17.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
 
 replace github.com/mikehelmick/go-bananas => ../..

@@ -338,15 +338,27 @@ func (s *Signer) getPublicKey(ctx context.Context) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("failed to base64-decode Y: %w", err)
 	}
 
-	var x, y big.Int
-	x.SetBytes(xRaw)
-	y.SetBytes(yRaw)
+	publicKey, err := parseP256PublicKey(xRaw, yRaw)
+	if err != nil {
+		return nil, fmt.Errorf("found %v, but it is not a valid P256 public key: %w", s.key, err)
+	}
+	return publicKey, nil
+}
 
-	if !elliptic.P256().IsOnCurve(&x, &y) {
-		return nil, fmt.Errorf("not on curve")
+// parseP256PublicKey builds a P-256 public key from its big-endian X and Y
+// coordinates, left-padding short ones. It rejects points not on the curve.
+func parseP256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
+	const coordLen = 32
+	if len(x) > coordLen || len(y) > coordLen {
+		return nil, fmt.Errorf("coordinate longer than %d bytes", coordLen)
 	}
 
-	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: &x, Y: &y}, nil
+	// SEC 1 uncompressed point: 0x04 || X || Y.
+	point := make([]byte, 1+2*coordLen)
+	point[0] = 4
+	copy(point[1+coordLen-len(x):1+coordLen], x)
+	copy(point[1+2*coordLen-len(y):], y)
+	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
 // convert1363ToASN1 converts an IEEE-1363 (r||s) signature to ASN.1 DER, so it

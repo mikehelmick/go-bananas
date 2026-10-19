@@ -6,7 +6,7 @@ description: Install go-bananas and stand up a minimal SSR server.
 
 ## Install
 
-go-bananas requires Go 1.26 or newer.
+go-bananas requires Go 1.27 or newer.
 
 ```sh
 go get github.com/mikehelmick/go-bananas@latest

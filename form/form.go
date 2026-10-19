@@ -182,6 +182,7 @@ func Bind(r *http.Request, dst any, opts ...Option) (Errors, error) {
 	}
 
 	if isMultipart(r) {
+		//nolint:gosec // G120: the body is capped by http.MaxBytesReader above.
 		if err := r.ParseMultipartForm(o.maxBodyBytes); err != nil {
 			return nil, err
 		}

@@ -5,7 +5,7 @@ description: Use when scaffolding a new server-side-rendered web application or 
 
 # Scaffold a go-bananas SSR application
 
-go-bananas (`github.com/mikehelmick/go-bananas`, Go 1.26+) is a lean SSR web
+go-bananas (`github.com/mikehelmick/go-bananas`, Go 1.27+) is a lean SSR web
 framework. Scaffold a new app by composing the renderer, the middleware chain, a
 cookie session store, and the graceful server.
 
