@@ -28,7 +28,7 @@ and [`exposure-notifications-server`](https://github.com/google/exposure-notific
 
 ## Install
 
-go-bananas requires **Go 1.26** or newer.
+go-bananas requires **Go 1.27** or newer.
 
 ```sh
 go get github.com/mikehelmick/go-bananas@latest

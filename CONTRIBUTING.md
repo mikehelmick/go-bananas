@@ -4,7 +4,7 @@ Thanks for your interest in contributing! Issues and pull requests are welcome.
 
 ## Development setup
 
-go-bananas requires **Go 1.26** or newer. The repository contains two Go
+go-bananas requires **Go 1.27** or newer. The repository contains two Go
 modules:
 
 - the root module (the framework itself), and
