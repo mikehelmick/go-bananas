@@ -12,7 +12,7 @@
     {
       "name": "go-bananas",
       "source": ".",
-      "description": "Skills for building server-side-rendered web apps with go-bananas: scaffolding, middleware, auth/OIDC, and secrets/keys."
+      "description": "Skills for building server-side-rendered web apps with go-bananas: scaffolding, middleware, auth/OIDC, secrets/keys, and upgrades."
     }
   ]
 }
