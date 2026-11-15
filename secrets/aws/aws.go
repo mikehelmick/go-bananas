@@ -27,6 +27,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -58,22 +59,11 @@ func NewSecretsManager(ctx context.Context, _ *secrets.Config) (secrets.SecretMa
 
 // GetSecretValue reads a secret. The name may include an optional version and
 // stage: "SECRET@VERSION#STAGE", where SECRET is the name or ARN, VERSION is the
-// version id, and STAGE is one of AWSCURRENT or AWSPREVIOUS. Values are returned
-// as plaintext strings.
+// version id, and STAGE is one of AWSCURRENT or AWSPREVIOUS. '@' and '#' are
+// always treated as separators, so they cannot appear in a secret name. Values
+// are returned as plaintext strings.
 func (sm *SecretsManager) GetSecretValue(ctx context.Context, name string) (string, error) {
-	var secretID, versionID, versionStage string
-
-	current := &secretID
-	for _, ch := range name {
-		switch ch {
-		case '@':
-			current = &versionID
-		case '#':
-			current = &versionStage
-		default:
-			*current += string(ch)
-		}
-	}
+	secretID, versionID, versionStage := parseRef(name)
 
 	req := &secretsmanager.GetSecretValueInput{SecretId: aws.String(secretID)}
 	if versionID != "" {
@@ -92,4 +82,23 @@ func (sm *SecretsManager) GetSecretValue(ctx context.Context, name string) (stri
 		return v, nil
 	}
 	return string(result.SecretBinary), nil
+}
+
+// parseRef splits "SECRET@VERSION#STAGE" into its parts. Each '@' or '#'
+// switches which part the following bytes are appended to; the separators are
+// dropped. It works on bytes, so non-UTF-8 input is passed through unchanged.
+func parseRef(name string) (id, version, stage string) {
+	var parts [3]strings.Builder
+	current := 0
+	for i := 0; i < len(name); i++ {
+		switch ch := name[i]; ch {
+		case '@':
+			current = 1
+		case '#':
+			current = 2
+		default:
+			parts[current].WriteByte(ch)
+		}
+	}
+	return parts[0].String(), parts[1].String(), parts[2].String()
 }

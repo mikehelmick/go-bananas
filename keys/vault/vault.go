@@ -67,18 +67,29 @@ func NewHashiCorpVault(_ context.Context, _ *keys.Config) (keys.KeyManager, erro
 	return &HashiCorpVault{client: client}, nil
 }
 
-// keyID is a parsed "name@version" Vault key reference.
+// keyID is a parsed Vault key reference.
 type keyID struct {
 	Name    string
 	Version string
 }
 
+// parseKeyID parses a key reference in either form: "name/N", which is what
+// SigningKeyVersion.KeyID and CreateKeyVersion return, or the older
+// "name@N". In both forms the version must be numeric so a malformed id is
+// rejected rather than misread.
 func parseKeyID(id string) (*keyID, error) {
-	parts := strings.SplitN(id, "@", 2)
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("missing version in: %v", id)
+	name, version, ok := strings.Cut(id, "@")
+	if !ok {
+		i := strings.LastIndex(id, "/")
+		if i <= 0 {
+			return nil, fmt.Errorf("missing version in: %v", id)
+		}
+		name, version = id[:i], id[i+1:]
 	}
-	return &keyID{Name: parts[0], Version: parts[1]}, nil
+	if _, err := strconv.ParseUint(version, 10, 64); err != nil {
+		return nil, fmt.Errorf("missing or non-numeric version in: %v", id)
+	}
+	return &keyID{Name: name, Version: version}, nil
 }
 
 type readKeyResponse struct {
@@ -98,6 +109,8 @@ type signingKeyVersion struct {
 	publicKey crypto.PublicKey
 }
 
+// KeyID returns the version's id in "name/N" form, as accepted by
+// [HashiCorpVault.NewSigner].
 func (v *signingKeyVersion) KeyID() string          { return fmt.Sprintf("%s/%d", v.name, v.version) }
 func (v *signingKeyVersion) CreatedAt() time.Time   { return v.createdAt.UTC() }
 func (v *signingKeyVersion) DestroyedAt() time.Time { return time.Time{} }
@@ -110,7 +123,8 @@ func (v *signingKeyVersion) Signer(_ context.Context) (crypto.Signer, error) {
 	}, nil
 }
 
-// SigningKeyVersions returns the signing-key versions for the named transit key.
+// SigningKeyVersions returns the signing-key versions for the named transit key,
+// newest (highest version) first.
 func (v *HashiCorpVault) SigningKeyVersions(_ context.Context, parent string) ([]keys.SigningKeyVersion, error) {
 	pth := fmt.Sprintf("transit/keys/%s", parent)
 	result, err := v.client.Logical().Read(pth)
@@ -155,7 +169,7 @@ func (v *HashiCorpVault) SigningKeyVersions(_ context.Context, parent string) ([
 	}
 
 	sort.Slice(versions, func(i, j int) bool {
-		return versions[i].(*signingKeyVersion).version < versions[j].(*signingKeyVersion).version
+		return versions[i].(*signingKeyVersion).version > versions[j].(*signingKeyVersion).version
 	})
 
 	return versions, nil
@@ -189,7 +203,7 @@ func (v *HashiCorpVault) CreateKeyVersion(ctx context.Context, parent string) (s
 	if len(list) < 1 {
 		return "", fmt.Errorf("no signing keys")
 	}
-	return list[len(list)-1].KeyID(), nil
+	return list[0].KeyID(), nil
 }
 
 // DestroyKeyVersion is unsupported on Vault.
@@ -197,7 +211,8 @@ func (v *HashiCorpVault) DestroyKeyVersion(_ context.Context, _ string) error {
 	return fmt.Errorf("vault does not support destroying a key version")
 }
 
-// NewSigner returns a signer for the Vault transit key "name@version".
+// NewSigner returns a signer for the Vault transit key "name/N" (the form
+// returned by SigningKeyVersion.KeyID) or "name@N".
 func (v *HashiCorpVault) NewSigner(ctx context.Context, id string) (crypto.Signer, error) {
 	k, err := parseKeyID(id)
 	if err != nil {
@@ -286,13 +301,14 @@ func (s *Signer) Public() crypto.PublicKey {
 	return s.publicKey
 }
 
-// Sign signs the pre-hashed digest via Vault's transit engine.
+// Sign signs the pre-hashed digest via Vault's transit engine, using the
+// signer's key version (not the latest), so the signature matches [Signer.Public].
 func (s *Signer) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
-	secret, err := s.client.Logical().Write(fmt.Sprintf("transit/sign/%s/sha2-256", s.name), map[string]any{
-		"input":                base64.StdEncoding.EncodeToString(digest),
-		"prehashed":            true,
-		"marshaling_algorithm": "asn1",
-	})
+	req, err := s.signRequest(digest)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := s.client.Logical().Write(fmt.Sprintf("transit/sign/%s/sha2-256", s.name), req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
@@ -315,6 +331,21 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, 
 		return nil, fmt.Errorf("failed to decode signature: %w", err)
 	}
 	return b, nil
+}
+
+// signRequest builds the transit sign request body for digest. key_version pins
+// the signature to the version whose public key this signer advertises.
+func (s *Signer) signRequest(digest []byte) (map[string]any, error) {
+	version, err := strconv.Atoi(s.version)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key version %q: %w", s.version, err)
+	}
+	return map[string]any{
+		"input":                base64.StdEncoding.EncodeToString(digest),
+		"prehashed":            true,
+		"marshaling_algorithm": "asn1",
+		"key_version":          version,
+	}, nil
 }
 
 func (s *Signer) getPublicKey() (crypto.PublicKey, error) {

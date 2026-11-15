@@ -58,27 +58,20 @@ func NewHashiCorpVault(_ context.Context, _ *secrets.Config) (secrets.SecretMana
 }
 
 // GetSecretValue reads a secret from Vault. The name is the secret path, with an
-// optional "?version=N" query. The value is expected under data.value, matching
-// the KV v2 engine:
+// optional "?version=N" query; without a version, Vault returns the latest
+// version. The value is expected under data.value, matching the KV v2 engine:
 //
 //	$ vault kv put my-secret value="abc123"
 //	/secret/data/my-secret  #=> { "data": { "value": "abc123" } }
 //
 // Dynamic secrets are technically fetchable, but lease renewal is not performed.
 func (kv *HashiCorpVault) GetSecretValue(_ context.Context, name string) (string, error) {
-	u, err := url.Parse(name)
+	name, params, err := parseRef(name)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse name: %w", err)
+		return "", err
 	}
 
-	name, version := u.Path, u.Query().Get("version")
-	if version == "" {
-		version = "1"
-	}
-
-	secret, err := kv.client.Logical().ReadWithData(name, map[string][]string{
-		"version": {version},
-	})
+	secret, err := kv.client.Logical().ReadWithData(name, params)
 	if err != nil {
 		return "", fmt.Errorf("failed to access secret: %w", err)
 	}
@@ -116,4 +109,21 @@ func (kv *HashiCorpVault) GetSecretValue(_ context.Context, name string) (string
 	default:
 		return "", fmt.Errorf("found secret %v, but is of unknown type %T", name, typ)
 	}
+}
+
+// parseRef splits a secret reference "PATH[?version=N]" into the Vault path and
+// the read parameters. params is nil when no (non-empty) version is given, so
+// Vault returns the latest version.
+func parseRef(name string) (path string, params map[string][]string, err error) {
+	u, err := url.Parse(name)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to parse name: %w", err)
+	}
+	if u.Scheme != "" || u.Host != "" || u.Fragment != "" {
+		return "", nil, fmt.Errorf("invalid secret name %q: must be a path with an optional ?version=N", name)
+	}
+	if version := u.Query().Get("version"); version != "" {
+		params = map[string][]string{"version": {version}}
+	}
+	return u.Path, params, nil
 }

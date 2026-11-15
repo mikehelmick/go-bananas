@@ -38,6 +38,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/keyvault/v7.0/keyvault"
@@ -45,6 +46,7 @@ import (
 	"github.com/mikehelmick/go-bananas/internal/azureauth"
 	"github.com/mikehelmick/go-bananas/internal/util"
 	"github.com/mikehelmick/go-bananas/keys"
+	"github.com/mikehelmick/go-bananas/logging"
 )
 
 func init() {
@@ -60,9 +62,18 @@ var (
 // by Azure Key Vault.
 type KeyVault struct {
 	client *keyvault.BaseClient
+
+	// aadWarnOnce guards the one-time warning logged when Decrypt is given
+	// additional authenticated data.
+	aadWarnOnce sync.Once
 }
 
-// keyID is a parsed "VAULT/KEY/VERSION" Key Vault reference.
+// errAADUnsupported is returned by Encrypt when it is given AAD.
+var errAADUnsupported = errors.New("azure key vault does not support additional authenticated data " +
+	"(API 7.0 with RSA-OAEP-256); pass nil aad")
+
+// keyID is a parsed "VAULT/KEY/VERSION" Key Vault reference. Vault is the
+// vault's base URL.
 type keyID struct {
 	Vault   string
 	Key     string
@@ -74,8 +85,12 @@ func parseKeyID(id string) (*keyID, error) {
 	if len(parts) < 3 {
 		return nil, fmt.Errorf("key must include vaultName, keyName, and keyVersion: %v", id)
 	}
+	vaultURL, err := azureauth.VaultURL(parts[0])
+	if err != nil {
+		return nil, err
+	}
 	return &keyID{
-		Vault:   fmt.Sprintf("https://%s.vault.azure.net", parts[0]),
+		Vault:   vaultURL,
 		Key:     parts[1],
 		Version: parts[2],
 	}, nil
@@ -101,6 +116,8 @@ type signingKeyVersion struct {
 	createdAt time.Time
 }
 
+// KeyID returns the version's id in "VAULT/KEY/VERSION" form, as accepted by
+// [KeyVault.NewSigner].
 func (v *signingKeyVersion) KeyID() string          { return v.kid }
 func (v *signingKeyVersion) CreatedAt() time.Time   { return v.createdAt.UTC() }
 func (v *signingKeyVersion) DestroyedAt() time.Time { return time.Time{} }
@@ -108,45 +125,79 @@ func (v *signingKeyVersion) Signer(ctx context.Context) (crypto.Signer, error) {
 	return v.kv.NewSigner(ctx, v.kid)
 }
 
-// SigningKeyVersions returns the versions for the parent "VAULT/KEY".
+// SigningKeyVersions returns the versions for the parent "VAULT/KEY". Each
+// version's KeyID is "VAULT/KEY/VERSION", the form accepted by NewSigner.
 func (v *KeyVault) SigningKeyVersions(ctx context.Context, parent string) ([]keys.SigningKeyVersion, error) {
 	parts := strings.SplitN(parent, "/", 2)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("key must include vaultName, keyName: %v", parent)
 	}
-	vaultID := fmt.Sprintf("https://%s.vault.azure.net", parts[0])
+	vaultID, err := azureauth.VaultURL(parts[0])
+	if err != nil {
+		return nil, err
+	}
 	keyName := parts[1]
 
-	maxResults := int32(512)
+	// 25 is the largest page size the Key Vault API accepts; the iterator
+	// follows nextLink for the rest.
+	maxResults := int32(25)
 	resp, err := v.client.GetKeyVersionsComplete(ctx, vaultID, keyName, &maxResults)
 	if err != nil {
 		return nil, err
 	}
 
-	var versions []keys.SigningKeyVersion
+	var versions []*signingKeyVersion
 	for resp.NotDone() {
+		key := resp.Value()
+		if key.Kid == nil {
+			return nil, fmt.Errorf("key version without kid in %v", parent)
+		}
+		attrs := key.Attributes
+		// Disabled versions cannot sign, so they are not listed.
+		if attrs == nil || attrs.Enabled == nil || *attrs.Enabled {
+			var createdAt time.Time
+			if attrs != nil && attrs.Created != nil {
+				createdAt = time.Time(*attrs.Created)
+			}
+			versions = append(versions, &signingKeyVersion{
+				kv:        v,
+				kid:       fmt.Sprintf("%s/%s/%s", parts[0], keyName, path.Base(*key.Kid)),
+				createdAt: createdAt,
+			})
+		}
 		if err := resp.NextWithContext(ctx); err != nil {
 			return nil, fmt.Errorf("failed to list: %w", err)
 		}
-		key := resp.Value()
-		versions = append(versions, &signingKeyVersion{
-			kv:        v,
-			kid:       *key.Kid,
-			createdAt: time.Time(*key.Attributes.Created),
-		})
 	}
 
-	sort.Slice(versions, func(i, j int) bool {
-		return versions[i].(*signingKeyVersion).kid < versions[j].(*signingKeyVersion).kid
-	})
+	sortNewestFirst(versions)
 
-	return versions, nil
+	out := make([]keys.SigningKeyVersion, 0, len(versions))
+	for _, ver := range versions {
+		out = append(out, ver)
+	}
+	return out, nil
+}
+
+// sortNewestFirst orders versions by creation time, newest first. Versions
+// without a creation time sort last.
+func sortNewestFirst(versions []*signingKeyVersion) {
+	sort.SliceStable(versions, func(i, j int) bool {
+		a, b := versions[i].createdAt, versions[j].createdAt
+		if a.IsZero() || b.IsZero() {
+			return !a.IsZero() && b.IsZero()
+		}
+		return a.After(b)
+	})
 }
 
 // CreateSigningKey creates a signing key under parent, returning its id. If it
 // already exists, the existing id is returned.
 func (v *KeyVault) CreateSigningKey(ctx context.Context, parent, name string) (string, error) {
-	vaultID := fmt.Sprintf("https://%s.vault.azure.net", parent)
+	vaultID, err := azureauth.VaultURL(parent)
+	if err != nil {
+		return "", err
+	}
 	if _, err := v.client.GetKey(ctx, vaultID, name, ""); err != nil {
 		var aerr autorest.DetailedError
 		if errors.As(err, &aerr) {
@@ -167,7 +218,10 @@ func (v *KeyVault) CreateKeyVersion(ctx context.Context, parent string) (string,
 	if len(parts) < 2 {
 		return "", fmt.Errorf("key must include vaultName, keyName: %v", parent)
 	}
-	vaultID := fmt.Sprintf("https://%s.vault.azure.net", parts[0])
+	vaultID, err := azureauth.VaultURL(parts[0])
+	if err != nil {
+		return "", err
+	}
 	keyName := parts[1]
 
 	resp, err := v.client.CreateKey(ctx, vaultID, keyName, keyvault.KeyCreateParameters{
@@ -192,9 +246,13 @@ func (v *KeyVault) DestroyKeyVersion(_ context.Context, _ string) error {
 	return fmt.Errorf("keyvault does not support destroying a key version")
 }
 
-// Encrypt encrypts plaintext with the named key. Key Vault does not support
-// additional authenticated data, so aad is ignored.
-func (v *KeyVault) Encrypt(ctx context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
+// Encrypt encrypts plaintext with the named key using RSA-OAEP-256. Key Vault
+// API 7.0 with RSA-OAEP-256 has no additional authenticated data, so Encrypt
+// returns an error when aad is non-empty rather than silently dropping it.
+func (v *KeyVault) Encrypt(ctx context.Context, keyID string, plaintext, aad []byte) ([]byte, error) {
+	if len(aad) > 0 {
+		return nil, errAADUnsupported
+	}
 	k, err := parseKeyID(keyID)
 	if err != nil {
 		return nil, err
@@ -214,11 +272,18 @@ func (v *KeyVault) Encrypt(ctx context.Context, keyID string, plaintext, _ []byt
 	return resBytes, nil
 }
 
-// Decrypt decrypts ciphertext with the named key. aad is ignored (unsupported).
-func (v *KeyVault) Decrypt(ctx context.Context, keyID string, ciphertext, _ []byte) ([]byte, error) {
+// Decrypt decrypts ciphertext with the named key using RSA-OAEP-256. Key Vault
+// API 7.0 with RSA-OAEP-256 has no additional authenticated data, so aad was
+// never bound to the ciphertext. To keep data encrypted by earlier versions
+// (which ignored aad) readable, a non-empty aad is ignored and a warning is
+// logged once per KeyVault.
+func (v *KeyVault) Decrypt(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
 	k, err := parseKeyID(keyID)
 	if err != nil {
 		return nil, err
+	}
+	if len(aad) > 0 {
+		v.warnAADOnce(ctx)
 	}
 	value := base64.URLEncoding.EncodeToString(ciphertext)
 	res, err := v.client.Decrypt(ctx, k.Vault, k.Key, k.Version, keyvault.KeyOperationsParameters{
@@ -233,6 +298,14 @@ func (v *KeyVault) Decrypt(ctx context.Context, keyID string, ciphertext, _ []by
 		return nil, fmt.Errorf("unable to decode decrypted data: %w", err)
 	}
 	return plaintext, nil
+}
+
+// warnAADOnce logs, once per KeyVault, that Decrypt ignored its aad.
+func (v *KeyVault) warnAADOnce(ctx context.Context) {
+	v.aadWarnOnce.Do(func() {
+		logging.FromContext(ctx).Warn("azure key vault does not support additional authenticated data; " +
+			"aad passed to Decrypt is ignored (it was never bound to the ciphertext)")
+	})
 }
 
 // NewSigner returns a signer for the key "VAULT/KEY/VERSION".
