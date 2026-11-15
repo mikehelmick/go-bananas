@@ -118,20 +118,21 @@ func (k *Filesystem) Encrypt(_ context.Context, keyID string, plaintext, aad []b
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
-	if len(infos) < 1 {
-		return nil, fmt.Errorf("there are no key versions")
-	}
+	// Only numeric names are versions, so stray files (metadata, .DS_Store) are
+	// skipped, and versions compare as numbers, not text.
 	var latest fs.DirEntry
+	var latestVersion uint64
 	for _, info := range infos {
-		if info.Name() == "metadata" {
+		v, ok := parseVersion(info.Name())
+		if !ok {
 			continue
 		}
-		if latest == nil || info.Name() > latest.Name() {
-			latest = info
+		if latest == nil || v > latestVersion {
+			latest, latestVersion = info, v
 		}
 	}
 	if latest == nil {
-		return nil, fmt.Errorf("key %q does not exist", keyID)
+		return nil, fmt.Errorf("there are no key versions")
 	}
 
 	latestPath := filepath.Join(pth, latest.Name())
@@ -173,13 +174,27 @@ func (k *Filesystem) Decrypt(_ context.Context, keyID string, ciphertext, aad []
 	}
 	version, ciphertext := parts[0], parts[1]
 
-	versionPath, err := k.resolve(keyID, string(version))
+	// The version is untrusted input that becomes a path element. Accepting
+	// only digits keeps it from naming a file under another key ("../other/1").
+	if _, ok := parseVersion(string(version)); !ok {
+		return nil, fmt.Errorf("invalid ciphertext: bad version")
+	}
+
+	// Read through a root opened on the key's own directory, so the version
+	// file can't resolve outside it (even via a swapped-in symlink). The errors
+	// don't wrap the OS error, so they don't reveal paths or which files exist.
+	keyDir, err := k.resolve(keyID)
 	if err != nil {
 		return nil, err
 	}
-	dek, err := os.ReadFile(versionPath)
+	root, err := os.OpenRoot(keyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read encryption key: %w", err)
+		return nil, fmt.Errorf("failed to open encryption key")
+	}
+	defer root.Close()
+	dek, err := root.ReadFile(string(version))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encryption key version")
 	}
 
 	block, err := aes.NewCipher(dek)
@@ -235,7 +250,12 @@ func (k *Filesystem) SigningKeyVersions(_ context.Context, parent string) ([]Sig
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || info.Name() == "metadata" {
+		if info.IsDir() {
+			return nil
+		}
+		// Only numeric names are versions; skip metadata and stray files.
+		version, ok := parseVersion(info.Name())
+		if !ok {
 			return nil
 		}
 
@@ -256,6 +276,7 @@ func (k *Filesystem) SigningKeyVersions(_ context.Context, parent string) ([]Sig
 
 		versions = append(versions, &filesystemSigningKey{
 			name:    strings.TrimPrefix(curr, k.root),
+			version: version,
 			created: info.ModTime(),
 			pk:      pk,
 		})
@@ -265,9 +286,9 @@ func (k *Filesystem) SigningKeyVersions(_ context.Context, parent string) ([]Sig
 		return nil, fmt.Errorf("failed to list keys: failed to walk: %w", err)
 	}
 
-	// Sort descending so the newest key is first.
+	// Sort descending (numerically) so the newest key is first.
 	sort.Slice(versions, func(i, j int) bool {
-		return versions[i].(*filesystemSigningKey).name > versions[j].(*filesystemSigningKey).name
+		return versions[i].(*filesystemSigningKey).version > versions[j].(*filesystemSigningKey).version
 	})
 
 	return versions, nil
@@ -382,8 +403,19 @@ func (k *Filesystem) DestroyKeyVersion(_ context.Context, id string) error {
 	return nil
 }
 
+// parseVersion reports whether name is a key version (a base-10 unsigned
+// integer, as written by CreateKeyVersion) and returns its value.
+func parseVersion(name string) (uint64, bool) {
+	v, err := strconv.ParseUint(name, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
 type filesystemSigningKey struct {
 	name    string
+	version uint64
 	created time.Time
 	pk      *ecdsa.PrivateKey
 }

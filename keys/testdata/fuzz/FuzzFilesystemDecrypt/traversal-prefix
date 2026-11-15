@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("secret")
+[]byte("")
+uint16(0)
+string("../fuzz/1")
