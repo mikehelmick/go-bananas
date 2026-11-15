@@ -30,7 +30,10 @@ go version
 ## Step 2: v1.0.x → v1.1.0
 
 v1.1.0 is a security release. It changes defaults to safe values and adds
-opt-ins. No persisted formats change, so a downgrade stays possible. Each entry
+opt-ins. Ciphertext and cookie formats are unchanged, so a downgrade stays
+possible: v1.0.x can decode v1.1 session cookies. Going back loses only v1.1-only
+state: split values are dropped once in each direction (entry 10), and v1.0.x
+ignores the created-at tracking that `CheckSessionMaxAge` uses. Each entry
 below gives **Grep**, **Affected if** and **Fix**. Entries marked
 **[decision]** need a human choice; don't pick silently.
 
@@ -59,10 +62,10 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 `HandleCSRF` never checks GET/HEAD/OPTIONS. TRACE now **requires** a token.
 
 - Grep (routes with no method restriction):
-  `grep -rnE --include='*.go' '\.(HandleFunc|Handle|Handler)\(' . | grep -v '\.Methods('`
+  `grep -rnE --include='*.go' '\.(HandleFunc|Handle|Handler|HandlerFunc)\(' . | grep -v '\.Methods('`
   A route whose `.Methods(` sits on a later line is a false positive; check with
   `-A3`. `PathPrefix(...).Handler(...)` hits (static files) are fine if the
-  handler is read-only.
+  handler is read-only, and `http.HandlerFunc(...)` conversions are not routes.
 - Grep (state changes on GET, such as sign-out or delete links):
   `grep -rniE --include='*.go' '"/(logout|signout|sign-out|delete|remove|unsubscribe)[^"]*"' .`
   and `grep -rniE 'href="[^"]*(logout|signout|sign-out|delete|remove)' --include='*.html' --include='*.tmpl' .`
@@ -90,17 +93,32 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
   `r.FormFile`). Header-token JSON and streaming requests are not capped.
 - Fix: give upload routes their own `HandleCSRF` on a subrouter. `HandleCSRF`
   must then come **off the root router**, since subrouters also run parent
-  middleware:
+  middleware. Everything that ran after `HandleCSRF` on `r`
+  (`PopulateTemplateVariables`, `InjectCurrentPath`, `ProcessLocale`, auth
+  guards) moves onto **both** subrouters, in the same order:
 
   ```go
+  // r keeps only the middleware that ran before HandleCSRF.
   upload := r.PathPrefix("/upload").Subrouter() // register first
   upload.Use(middleware.HandleCSRF(h, middleware.WithCSRFMaxBodyBytes(64<<20)))
+  upload.Use(middleware.PopulateTemplateVariables(tmplCfg))
+  upload.Use(middleware.InjectCurrentPath())
+  upload.Use(middleware.ProcessLocale(locales))
   upload.HandleFunc("", handleUpload).Methods(http.MethodPost)
 
   app := r.NewRoute().Subrouter()
   app.Use(middleware.HandleCSRF(h)) // 1 MiB default
-  app.Use(middleware.PopulateTemplateVariables(tmplCfg)) // middleware after CSRF moves too
+  app.Use(middleware.PopulateTemplateVariables(tmplCfg))
+  app.Use(middleware.InjectCurrentPath())
+  app.Use(middleware.ProcessLocale(locales))
+  app.HandleFunc("/", home).Methods(http.MethodGet) // every other route goes on app
   ```
+
+  **Move every existing route registration from `r` to `app`.** A route left on
+  `r` runs **without CSRF protection**, because `HandleCSRF` is no longer on
+  `r`. After the change, `grep -rnE --include='*.go' '\br\.(HandleFunc|Handle|PathPrefix|Path|Methods)\(' .`
+  should show only the `upload` and `app` subrouter setup (and any read-only
+  static `PathPrefix`).
 
   **[decision]** the upload limit. Docs: [Request body limit](https://mikehelmick.github.io/go-bananas/docs/sessions-and-csrf/#request-body-limit).
 
@@ -137,6 +155,11 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
   If no deploy config is in the repo, **ask the user** whether the app runs
   behind a proxy and whether the domain is preloaded; don't assume either way.
   Docs: [SecureHeaders options](https://mikehelmick.github.io/go-bananas/docs/middleware-chain/#secureheaders-options).
+- Even with no proxy, **recommend pinning** `SecureHeaders` outside dev mode
+  with `WithAllowedHosts` (reject any other `Host` with 400) or `WithSSLHost`,
+  as `examples/ssr-oidc` now does from `ALLOWED_HOSTS` and the host of
+  `SERVER_ENDPOINT`. Without either, the HTTPS redirect goes to whatever `Host`
+  the client sent. **[decision]** which hosts to list.
 
 **5. The template `serverEndpoint` is empty in production unless configured.**
 
@@ -146,7 +169,9 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
   Outside dev mode `serverEndpoint` is now `""` (it used to come from the
   attacker-controlled `Host` header), and a warning is logged once. Absolute
   links, canonical/OG tags and email links built from it break. Flag this even
-  if no template uses it yet.
+  if no template uses it yet. The new `AllowedHosts` field also **breaks unkeyed
+  struct literals** of `TemplateConfig` at compile time (rare, but `go vet`
+  flags them as `composites`); rewrite them with field names.
 - Fix:
 
   ```go
@@ -172,7 +197,11 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 
 - Grep: `grep -rn --include='*.go' 'RealHostFromRequest' .`
 - Affected if tests or code compare its output for IPv6 hosts. It now returns
-  `https://[::1]:8443`, not `https://::1:8443`. Other hosts are unchanged.
+  `https://[2001:db8::1]:8443`, not `https://2001:db8::1:8443`. `::1` (with or
+  without brackets) now counts as localhost, so it gets `http`:
+  `http://[::1]:8080`, where v1.0.x gave `https://::1:8080`. That also changes
+  the dev-mode `serverEndpoint` for a browser on `[::1]`. Other hosts are
+  unchanged.
 - Fix: update expectations.
 
 ### Cookies and sessions
@@ -185,8 +214,9 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
     Secure. Local HTTP dev breaks on Safari and on any host other than
     `localhost`/`127.0.0.1` (LAN IPs, Docker hostnames).
   - JavaScript can no longer read the session cookie.
-- Fix: drop `HttpOnly`/`Secure`/`SameSite` (they are overridden) and opt out
-  only in dev:
+- Fix: drop `HttpOnly`/`Secure` (they are overridden). **Keep an explicit
+  `SameSite`**: an explicit `Strict` (or `None`) is kept, but removing it falls
+  back to the Lax default and weakens `Strict`. Opt out only in dev:
 
   ```go
   var copts []cookiestore.Option
@@ -216,14 +246,18 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 
 **10. Split-value cookies are bound to their session.**
 
-- Grep: `grep -rn --include='*.go' 'RequireSession(' .`. Affected only if the
-  second argument is non-nil.
+- Grep: `grep -rnE --include='*.go' 'Require(Named)?Session\(' .`. Affected
+  only if the `splitValues` argument (second for `RequireSession`, third for
+  `RequireNamedSession`) is non-nil.
 - Affected if you use split values: `_gbs-<key>` cookies from v1.0.x are
   **dropped once at upgrade**, so users lose that value (for example a stored ID
   token, which may force a re-login). During a **rolling deploy**, a visitor who
-  moves between v1.0.x and v1.1 instances loses it each time. Only one split key
-  per router is supported. Deleting the session (`Options.MaxAge = -1`) now also
-  expires its split cookies.
+  moves between v1.0.x and v1.1 instances loses it each time. A **downgrade** to
+  v1.0.x drops v1.1 split cookies once the same way, though v1.0.x still reads
+  the main v1.1 session cookie. One session may split several keys, but two named
+  sessions on the same router must not split the same key: the `_gbs-<key>`
+  cookie name doesn't include the session name. Deleting the session
+  (`Options.MaxAge = -1`) now also expires its split cookies.
 - Fix: make handlers tolerate a missing split value, and **[decision]** finish
   the rollout quickly (or drain old instances) before relying on split values.
   Docs: [Split values](https://mikehelmick.github.io/go-bananas/docs/sessions-and-csrf/#split-values).
@@ -256,8 +290,14 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 
 - Grep: `grep -rn --include='*.go' -E 'ServeHTTPHandler\(|ServeHTTP\(ctx' .`
 - Affected if a request body can take longer than 5 minutes to arrive (large
-  uploads on slow links, streamed request bodies). Responses are not limited
-  (no `WriteTimeout`), so SSE and streaming downloads keep working.
+  uploads on slow links, streamed request bodies). Also affected if you hijack
+  connections (WebSockets, raw TCP upgrades) and don't clear the deadline:
+  `ReadTimeout` sets a read deadline on the connection that survives the hijack,
+  so reads fail 5 minutes after the request started. Call
+  `conn.SetReadDeadline(time.Time{})` after hijacking, or check that your
+  WebSocket library does. Responses are not limited (no `WriteTimeout`), so SSE
+  and streaming downloads keep working.
+  Grep for hijacking: `grep -rnE --include='*.go' 'Hijack|websocket\.(Upgrader|Accept)|nhooyr|gorilla/websocket|coder/websocket' .`
 - Fix: for other limits, pass your own server:
 
   ```go
@@ -308,9 +348,16 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 
 - Grep: `grep -rn --include='*.go' -E 'WrapCacher|SecretCacheTTL|SECRET_CACHE_TTL' .`
 - Affected if you rely on a cancelled request aborting a slow secret fetch. The
-  shared fetch now runs up to 30s (or the owner's later deadline), and a waiting
-  caller's own cancellation isn't honored while it's in flight.
-- Fix: usually none. Set backend timeouts if 30s is too long.
+  shared fetch keeps the first caller's context values but ignores its
+  cancellation. It is capped at 30s, or the first caller's deadline if sooner;
+  a later deadline never extends it. A waiting caller's own ctx isn't honored:
+  it can't cancel and waits for the shared fetch, for up to 30s. Also affected
+  if the wrapped provider authorizes per caller through ctx values (for example
+  a caller identity on the context): the first caller's values are used for a
+  result shared with every waiter.
+- Fix: usually none. Set backend timeouts if 30s is too long. A provider that
+  authorizes per caller through ctx values **must not** be wrapped in
+  `WrapCacher`.
 
 ### Cache
 
@@ -343,9 +390,11 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 **18. `toJSON` returns real JSON.**
 
 - Grep: `grep -rn 'toJSON' --include='*.html' --include='*.tmpl' --include='*.txt' --include='*.go' .`
-- Affected if templates use `toJSON`. HTML templates used to get a base64 string
-  and now get the JSON value (as `template.JS`, padded with spaces). Text
-  templates used to print a byte list and now print the JSON string.
+- Affected if templates use `toJSON`. It used to return bytes, which rendered as
+  a base64 string inside `<script>` (JS) contexts and as a Go byte list
+  (`[123 34 …]`) everywhere else, including HTML text and text templates. HTML
+  templates now get the JSON value (as `template.JS`, padded with spaces), and
+  text templates get the JSON string.
 - Fix: drop workarounds (`printf "%s"`, `safeJS`, `atob`, base64 decoding):
   `const data = {{ toJSON .Data }};`
 
@@ -389,8 +438,11 @@ v1.1.0 also hardened the example app. Apps that copied it should check:
   `-` or `:` after the file name gives the real line).
   Fix: read the values into locals and `delete` them before checking anything
   or writing the response.
-- **Non-constant-time state compare:** `grep -rniE --include='*.go' '(state|nonce)"?\)? *!= ' .`
-  (matches `Get("state") != want` and `idToken.Nonce != want`).
+- **Non-constant-time state compare:** `grep -rniE --include='*.go' '(state|nonce)"?\)? *[!=]= |[!=]= *[^;{]*(state|nonce)' .`
+  (matches `Get("state") != want`, `idToken.Nonce != want`, `want == state`
+  and `stored != r.FormValue("state")`). A grep can't see every shape (values
+  read into differently named locals, `strings.EqualFold`, `bytes.Equal`), so
+  also **read every state and nonce comparison** in the login callback.
   Fix: `subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1`, and
   reject an empty value.
 - **Authorization by unverified email:** `grep -rniE --include='*.go' --exclude='*_test.go' 'admin.*email|email.*admin|\.Email\)' .`,
@@ -420,7 +472,10 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
   The module's `go` directive stays `1.27`, so bump CI and build images
   yourself.
 - With a replace directive, update the replaced checkout instead of `go get`.
-- If the build fails, it is almost certainly entry 21.
+- If the build fails, it is almost certainly entry 21 or entry 5:
+  `TemplateConfig` gained an `AllowedHosts` field, so an **unkeyed** struct
+  literal (`middleware.TemplateConfig{"name", "https://…", id, tag, devMode, nil}`)
+  no longer compiles. Rewrite it with field names.
 - Apply the non-decision fixes from Step 2, then re-run the block above.
 
 ## Step 4: report
@@ -430,7 +485,8 @@ Tell the user, in short lists:
 1. **Version:** from → to, and the Go toolchain in use.
 2. **Changed:** each fix you applied, with file:line.
 3. **Needs a human decision:** every **[decision]** item that applies. Typical
-   ones: `WithSSLHost` vs `WithTrustedHostHeaders`+`WithAllowedHosts`; whether to
+   ones: `WithSSLHost` vs `WithTrustedHostHeaders`+`WithAllowedHosts` (and which
+   hosts to pin even without a proxy); whether to
    send `WithHSTSPreload`; SameSite=None for `form_post`/SAML; the
    `CheckSessionMaxAge` duration; the upload body limit; Azure AAD; the deploy
    strategy for split cookies; `email_verified` policy.
