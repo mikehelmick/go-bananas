@@ -197,7 +197,7 @@ Steps:
   - `TestCheckSessionMaxAge`: created-at 2h ago with maxAge 1h → `onExpired` runs and the session is cleared; created-at 10m ago → next runs; a session missing created-at is treated as created now and stamped.
   - `TestNewHTTPServerTimeouts`: `ReadHeaderTimeout==10s`, `ReadTimeout==5*time.Minute`, `IdleTimeout==120*time.Second`, `WriteTimeout==0`.
 - [ ] Run them. Expected: FAIL.
-- [ ] **Implement:** in `New`, copy `*opts` into a new struct, then set `HttpOnly = true`, `Secure = !cfg.insecure`, and SameSite Lax when it is 0 or `SameSiteDefaultMode`. The `SameSite=None` without `Secure` case errors from `Save` (the gorilla `Store` interface gives `New` no error return). Add `StoreCreatedAt`/`CreatedAt` and `CheckSessionMaxAge`. Extract `newHTTPServer`.
+- [ ] **Implement:** in `New`, copy `*opts` into a new struct, then set `HttpOnly = true`, `Secure = !cfg.insecure`, and SameSite Lax when it is 0 or `SameSiteDefaultMode`. As built: `SameSite=None` forces `Secure` (D18 changed during the build). Add `StoreCreatedAt`/`CreatedAt` and `CheckSessionMaxAge`. Extract `newHTTPServer`.
 - [ ] **Fuzz test** `FuzzHotCodecDecode(name, value string)` with a static 64-byte entropy func:
   - No panic.
   - `Encode(n, v)` then `Decode(n, …)` round-trips.

@@ -37,10 +37,10 @@ exploitable issues.
 | D21 | `cookiestore` always sets `Secure`. A new variadic `cookiestore.New(fn, opts, ...Option)` adds `WithInsecureCookies()` for local HTTP dev. | one-way |
 | D22 | The CSRF body cap defaults to 1 MiB and applies only to non-safe methods (as built, only when the token must be read from the body). Upload routes use a subrouter with their own `HandleCSRF`. | one-way |
 | D23 | Azure `Encrypt` errors when `len(aad) > 0`. Azure `Decrypt` logs a warning once and still decrypts, so existing data stays readable. (API 7.0 with RSA-OAEP-256 never supported AAD.) | one-way |
-| D24 | *Added during the build.* Split session cookies are bound to the main session by a private random ID; they are joined only when the ID matches and the session isn't new, and they are expired on logout (`MaxAge < 0`). Unbound v1.0.x split cookies are dropped once. The ID is stored under the `session` package's already-registered key type, so v1.0.x can still decode v1.1 sessions (rollback stays safe). | one-way |
+| D24 | *Added during the build.* Split session cookies are bound to the main session by a private random ID; they are joined only when the ID matches and the session isn't new, and they are expired on logout (`MaxAge < 0`). Unbound v1.0.x split cookies are dropped once. The ID is stored under a plain, reserved string key (`"_gbs_binding"`), which gob encodes without registration, so v1.0.x can still decode v1.1 sessions (rollback stays safe) and no new exported API is needed. | one-way |
 | D25 | *Added during the build.* The stack order is 1a→1b→1c→2a→2b→2c→2d→3a→4a→4d→3b→4b→4c→5a→5b (4a/4d moved ahead of 3b). Each branch is one PR. | two-way |
 | D26 | *Added during the build.* New exported identifiers beyond the plan: `cache.MaxExpireAfter` (100 years, the TTL bound for #12) and `cache.ErrLookupPanicked` (what coalesced waiters get when the owner's lookup panics). | one-way |
-| D27 | *Added during the build.* `secrets.Cacher` runs its shared fetch on a context detached from the caller's cancellation and capped at 30 s (never longer), so one cancelled request can't fail coalesced callers. Waiters can't cancel while a fetch is in flight (bounded by 30 s). Providers must not authorize per caller through context values, because the first caller's context is used for the shared result. | one-way |
+| D27 | *Added during the build.* `secrets.Cacher` runs its shared fetch on a context detached from the caller's cancellation and deadline, with a fixed 30 s timeout, so one cancelled or nearly expired request can't fail coalesced callers. Waiters can't cancel while a fetch is in flight (bounded by 30 s). Providers must not authorize per caller through context values, because the first caller's context is used for the shared result. | one-way |
 
 ## Findings in scope
 
@@ -199,7 +199,7 @@ This section records the design-security-reviewer findings (2026-11-14) and how 
 | L5 | `toJSON`: also check `<!--` and U+2028/9. The text-template variant must return `string`. `safeHTML` is a footgun. | Fold into #17; document `safeHTML` |
 | L6 | HEAD/OPTIONS bypass CSRF on routes that don't call `.Methods()`. | Added as finding #26: docs and the upgrade skill |
 | L7 | A variadic parameter changes the func type. | Run `apidiff` in phase 5 and list the result in the release notes |
-| L8 | Unpinned tools and actions. | D19 |
+| L8 | Unpinned tools and actions. | D19, plus every workflow (`ci.yml`, `pages.yml`, `codeql-analysis.yml`) pinned by SHA with `persist-credentials: false` |
 | L9 | Cache coalescing: no cached errors, and a panicking lookup must not hang waiters. | Fold into 2d (own per-key map, no new dependency); fix the stale doc comment |
 | — | D11 means intermediate branches never get remote CI. | Accepted: the gate runs locally on every branch |
 
@@ -226,9 +226,11 @@ This section records the design-security-reviewer findings (2026-11-14) and how 
 - **Supported runtimes:** the `go 1.27` directive is unchanged. Go ≥ 1.27.4 is
   recommended (D13). Dependencies were updated in #49.
 - **Downgrade:** ciphertext formats are unchanged, and v1.0.x can decode v1.1
-  session cookies (new values use already-registered gob types; D24). Going
-  back loses only v1.1-only state: split values are dropped once in each
-  direction, and created-at/max-age tracking is ignored by v1.0.x. Azure
+  session cookies (new values use gob types v1.0.x already knows; D24),
+  including split values: v1.0.x joins split cookies without checking the
+  binding, so after a rollback it is exposed to #27 again. Returning to v1.1
+  drops split values once, because v1.0.x rewrites them without the binding.
+  v1.0.x ignores created-at/max-age tracking. Azure
   signing key IDs listed under v1.1 (`VAULT/KEY/VERSION`) were never usable
   under v1.0.x. Pinning v1.0.x still works but stays vulnerable.
 - **Disclosure:** v1.0.x is exploitable for #1, #2 and #27 (the #27 backport scope is pending an owner decision). Push, merge, tag and
