@@ -27,7 +27,7 @@ exploitable issues.
 | D11 | Nothing is pushed until the work is done. Phases are stacks of local branches, each reviewed before the next is stacked on it. One push at the end, with approval. | two-way |
 | D12 | GitHub security advisories for #1 (CSRF bypass) and #2 (key traversal) are published at the v1.1.0 release. Claude drafts them and the owner publishes. | one-way |
 | D13 | The `go` directive stays at `1.27`. The release notes recommend Go ≥ 1.27.4 for GO-2026-6859. CI pins 1.27.4 and runs `govulncheck`. | two-way |
-| D14 | `MutateMethod` considers only `POST` with `Content-Type: application/x-www-form-urlencoded`, and wraps the body in a 64 KB `MaxBytesReader` before `ParseForm`. Multipart bodies are never parsed by it. | two-way |
+| D14 | `MutateMethod` considers only `POST` with `Content-Type: application/x-www-form-urlencoded`, and reads at most 64 KB of the body. Multipart bodies are never parsed by it. *Changed during the build:* it buffers at most 64 KB+1, parses with `url.ParseQuery`, restores the body and never calls `ParseForm` (see plan Task 1b). | two-way |
 | D15 | `SecureHeaders` adds `WithSSLHost(host)` and `WithAllowedHosts(hosts...)`. `WithTrustedHostHeaders` is documented as requiring `WithAllowedHosts`. The fuzz property becomes "the Location host is in the allowlist". | two-way |
 | D16 | `TemplateConfig` gains `AllowedHosts []string`. Outside dev mode with an empty `ServerEndpoint`, the derived host is used only if it is allowlisted; otherwise it falls back to the first allowed host, or to empty plus the warning. The example sets `ServerEndpoint`. Supersedes D6. | two-way |
 | D17 | Sessions record a created-at time. A new opt-in `CheckSessionMaxAge(maxAge, onExpired)` middleware (modeled on `CheckSessionIdleNoAuth`) enforces an absolute lifetime. The docs say cookie sessions can't be revoked except by rotating keys. | two-way |
@@ -35,7 +35,7 @@ exploitable issues.
 | D19 | `fuzz.yml` uploads no artifacts; a failure only fails the job, and the maintainer reproduces it locally. It sets `permissions: contents: read`, pins actions by SHA, and pins the `govulncheck` version. | two-way |
 | D20 | v1.0.2 is cut from `v1.0.1` with only the #1 and #2 fixes, released the same day as v1.1.0. Go vuln DB reports for `middleware.MutateMethod` and `keys.(*Filesystem).Decrypt` are drafted by Claude and submitted by the owner. | one-way |
 | D21 | `cookiestore` always sets `Secure`. A new variadic `cookiestore.New(fn, opts, ...Option)` adds `WithInsecureCookies()` for local HTTP dev. | one-way |
-| D22 | The CSRF body cap defaults to 1 MB and applies only to non-safe methods. Upload routes use a subrouter with their own `HandleCSRF`. | one-way |
+| D22 | The CSRF body cap defaults to 1 MiB and applies only to non-safe methods (as built, only when the token must be read from the body). Upload routes use a subrouter with their own `HandleCSRF`. | one-way |
 | D23 | Azure `Encrypt` errors when `len(aad) > 0`. Azure `Decrypt` logs a warning once and still decrypts, so existing data stays readable. (API 7.0 with RSA-OAEP-256 never supported AAD.) | one-way |
 | D24 | *Added during the build.* Split session cookies are bound to the main session by a private random ID; they are joined only when the ID matches and the session isn't new, and they are expired on logout (`MaxAge < 0`). Unbound v1.0.x split cookies are dropped once. | one-way |
 | D25 | *Added during the build.* The stack order is 1a→1b→1c→2a→2b→2c→2d→3a→4a→4d→3b→4b→4c→5a→5b (4a/4d moved ahead of 3b). Each branch is one PR. | two-way |
@@ -47,7 +47,7 @@ exploitable issues.
 | 1 | High | `MutateMethod` (`middleware/method.go`) rewrites any method, including POST to GET, from body *or query*. Used via `r.Use` it runs after routing, so the POST handler runs while `HandleCSRF` sees GET and skips validation. | Override only when the original method is POST, the value comes from `PostFormValue`, and the target is in {PUT, PATCH, DELETE}. Document that it must wrap the router. |
 | 2 | Med | `keys.Filesystem.Decrypt` uses the ciphertext's version prefix unvalidated, so `../otherKey/1:` decrypts with another key. | Version must parse with `strconv.ParseUint`. Generated versions are `UnixNano` digits. |
 | 3 | Med | `SecureHeaders` trusts `X-Forwarded-Host` for the HTTPS redirect, so an attacker controls the 301 target and can poison caches. | D2. |
-| 4 | Med | The template `serverEndpoint` comes from the client Host header when unset. | D6. |
+| 4 | Med | The template `serverEndpoint` comes from the client Host header when unset. | D16 (supersedes D6). |
 | 5 | Med | `secrets/vault` defaults `version=1`, so rotation is ignored. | Omit the version parameter when it is not given, so Vault returns the latest. |
 | 6 | Med | Azure KMS silently ignores AAD. | D3. |
 | 7 | Med | `cookiestore.New` sets no HttpOnly/SameSite defaults. | D4. |
