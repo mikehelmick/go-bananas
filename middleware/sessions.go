@@ -37,6 +37,12 @@ const (
 	// defaultSessionName is the cookie name used by [RequireSession].
 	defaultSessionName = "go-bananas-session"
 	splitValuePrefix   = "_gbs-"
+
+	// splitBindingValueKey is the session-value key for the random ID that
+	// binds split cookies to their main session. It is a plain string, which
+	// gob encodes without registration, so go-bananas v1.0.x can still decode
+	// sessions that carry it.
+	splitBindingValueKey = "_gbs_binding"
 )
 
 // RequireNamedSession is like [RequireSession] but uses a specific session
@@ -58,9 +64,15 @@ func RequireNamedSession(store sessions.Store, name string, splitValues []any, h
 // only alongside that session; resetting or deleting the session unbinds or
 // expires it. One split key per router is supported.
 //
-// Split cookies written by go-bananas v1.0.x carry no binding and are dropped.
-// During a rolling deploy, a visitor moving between v1.0.x and v1.1 instances
-// loses split values each time, so finish the rollout before relying on them.
+// The binding ID is stored in the session values under the string key
+// "_gbs_binding", which is reserved; handlers must not set or remove it.
+//
+// Split cookies written by go-bananas v1.0.x carry no binding and are dropped
+// once after upgrading. A downgrade to v1.0.x keeps split values: v1.0.x joins
+// split cookies without checking the binding, so it is exposed to the replay
+// bug again. Returning to v1.1 then drops them once, because v1.0.x rewrites
+// them unbound. During a rolling deploy this repeats as a visitor moves
+// between versions, so finish the rollout before relying on split values.
 func RequireSession(store sessions.Store, splitValues []any, h *render.Renderer) mux.MiddlewareFunc {
 	return buildHandler(store, defaultSessionName, splitValues, h)
 }
@@ -86,7 +98,7 @@ func joinSplitSessionCookie(r *http.Request, store sessions.Store, key any, sess
 	if !ok {
 		return splitSession
 	}
-	id, splitID := sess.SplitBinding(session), sess.SplitBinding(splitSession)
+	id, splitID := splitBindingID(session), splitBindingID(splitSession)
 	if session.IsNew || id == "" || subtle.ConstantTimeCompare([]byte(id), []byte(splitID)) != 1 {
 		logger.Debug("dropping split session cookie not bound to this session", "name", name)
 		return splitSession
@@ -110,7 +122,7 @@ func splitSessionCookie(r *http.Request, session, splitSession *sessions.Session
 	deleting := session.Options != nil && session.Options.MaxAge < 0
 	if ok && !deleting {
 		splitSession.Values[key] = value
-		sess.StoreSplitBinding(splitSession, id)
+		storeSplitBindingID(splitSession, id)
 		return true
 	}
 
@@ -123,18 +135,32 @@ func splitSessionCookie(r *http.Request, session, splitSession *sessions.Session
 	return true
 }
 
+// splitBindingID returns the binding ID stored on session, or "".
+func splitBindingID(session *sessions.Session) string {
+	id, _ := session.Values[splitBindingValueKey].(string)
+	return id
+}
+
+// storeSplitBindingID stores id as session's binding ID.
+func storeSplitBindingID(session *sessions.Session, id string) {
+	if session.Values == nil {
+		session.Values = make(map[any]any)
+	}
+	session.Values[splitBindingValueKey] = id
+}
+
 // ensureSessionID returns the session's random binding ID, generating and
 // storing one if it has none (a new session, or a value map the handler
 // replaced).
 func ensureSessionID(session *sessions.Session) (string, error) {
-	if id := sess.SplitBinding(session); id != "" {
+	if id := splitBindingID(session); id != "" {
 		return id, nil
 	}
 	id, err := util.RandomToken(32)
 	if err != nil {
 		return "", fmt.Errorf("generate session ID: %w", err)
 	}
-	sess.StoreSplitBinding(session, id)
+	storeSplitBindingID(session, id)
 	return id, nil
 }
 

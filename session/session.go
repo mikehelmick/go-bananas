@@ -45,7 +45,6 @@ const (
 	sessionKeyLastActivity = sessionKey("lastActivity")
 	sessionKeyNonce        = sessionKey("nonce")
 	sessionKeyRegion       = sessionKey("region")
-	sessionKeySplitBinding = sessionKey("splitBinding")
 )
 
 // Flash returns the [flash.Flash] for the provided session, initializing the
@@ -194,33 +193,6 @@ func Region(session *sessions.Session) string {
 	if !ok {
 		return ""
 	}
-	return s
-}
-
-// StoreSplitBinding stores the random ID that binds split-value cookies to
-// their main session (see middleware.RequireSession). A nil session is a no-op.
-//
-// The ID is stored under the session package's registered key type, so
-// sessions that carry it remain decodable by go-bananas v1.0.x.
-func StoreSplitBinding(session *sessions.Session, id string) {
-	if session == nil {
-		return
-	}
-	if session.Values == nil {
-		session.Values = make(map[any]any)
-	}
-	session.Values[sessionKeySplitBinding] = id
-}
-
-// ClearSplitBinding removes the split-value binding ID from the session.
-func ClearSplitBinding(session *sessions.Session) {
-	sessionClear(session, sessionKeySplitBinding)
-}
-
-// SplitBinding returns the split-value binding ID stored on the session, or ""
-// if absent or malformed.
-func SplitBinding(session *sessions.Session) string {
-	s, _ := sessionGet(session, sessionKeySplitBinding).(string)
 	return s
 }
 

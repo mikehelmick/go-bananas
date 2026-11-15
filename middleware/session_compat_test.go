@@ -96,9 +96,10 @@ func main() {
 `
 
 // TestSessionReadableByV10 encodes a v1.1 session that binds a split cookie
-// and decodes it with a gob registry holding only the v1.0.x types. A
-// v1.0.x instance must be able to read it during a rollback; an unregistered
-// key type would fail the decode and drop the whole session.
+// and decodes the main and split cookies with a gob registry holding only
+// the v1.0.x types. A v1.0.x instance must be able to read both during a
+// rollback; an unregistered key type would fail the decode and drop the
+// whole session.
 func TestSessionReadableByV10(t *testing.T) {
 	t.Parallel()
 
@@ -120,10 +121,32 @@ func TestSessionReadableByV10(t *testing.T) {
 	})
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/login", nil))
 
-	encoded, ok := store.saved[defaultSessionName]
-	if !ok {
-		t.Fatal("main session was not saved")
+	// The binding ID is stored under a plain string key, which gob encodes
+	// without registration.
+	id, ok := values[splitBindingValueKey].(string)
+	if !ok || id == "" {
+		t.Fatalf("main session has no split binding under %q: %v", splitBindingValueKey, values)
 	}
+
+	decoder := buildV10Decoder(t, goBin)
+	for name, want := range map[string]map[any]any{
+		defaultSessionName:      values,
+		splitCookieName("user"): {"user": "alice", splitBindingValueKey: id},
+	} {
+		encoded, ok := store.saved[name]
+		if !ok {
+			t.Fatalf("session %q was not saved", name)
+		}
+		got := decodeWithV10(t, decoder, encoded)
+		if w := formatValues(want); !slices.Equal(got, w) {
+			t.Errorf("v1.0.x decoded %q values:\n%s\nwant:\n%s", name, strings.Join(got, "\n"), strings.Join(w, "\n"))
+		}
+	}
+}
+
+// buildV10Decoder compiles v10Decoder and returns the binary's path.
+func buildV10Decoder(t *testing.T, goBin string) string {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module v10decoder\n\ngo 1.21\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -131,29 +154,35 @@ func TestSessionReadableByV10(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(v10Decoder), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(t.Context(), goBin, "run", ".")
+	bin := filepath.Join(dir, "v10decoder")
+	cmd := exec.CommandContext(t.Context(), goBin, "build", "-o", bin, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "GOPROXY=off", "GOTOOLCHAIN=local")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build v1.0.x decoder: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// decodeWithV10 runs the v1.0.x decoder on encoded and returns its lines.
+func decodeWithV10(t *testing.T, decoder string, encoded []byte) []string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), decoder)
 	cmd.Stdin = bytes.NewReader(encoded)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("v1.0.x registry failed to decode the session: %v\n%s", err, stderr.String())
 	}
+	return strings.Split(strings.TrimSpace(stdout.String()), "\n")
+}
 
-	want := make([]string, 0, len(values))
+// formatValues renders values the way v10Decoder prints them.
+func formatValues(values map[any]any) []string {
+	lines := make([]string, 0, len(values))
 	for k, v := range values {
-		want = append(want, fmt.Sprintf("%v=%T:%v", k, v, v))
+		lines = append(lines, fmt.Sprintf("%v=%T:%v", k, v, v))
 	}
-	slices.Sort(want)
-	got := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if !slices.Equal(got, want) {
-		t.Errorf("v1.0.x decoded values:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
-
-	s := sessions.NewSession(store, defaultSessionName)
-	s.Values = values
-	if sess.SplitBinding(s) == "" {
-		t.Error("main session has no split binding")
-	}
+	slices.Sort(lines)
+	return lines
 }
