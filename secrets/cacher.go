@@ -48,9 +48,10 @@ const cacherFetchTimeout = 30 * time.Second
 //
 // Concurrent calls for the same name share one fetch. The fetch runs on a
 // context derived from the first caller's ctx that keeps its values but is
-// detached from its cancellation, so cancelling one request does not fail the
-// others. It ends at the first caller's deadline or after cacherFetchTimeout
-// (30s), whichever is sooner, so it never runs longer than 30s.
+// detached from its cancellation and deadline, so cancelling one request does
+// not fail the others. It always ends after cacherFetchTimeout (30s); the
+// caller's deadline is not used, so a first caller with little time left does
+// not fail every waiter.
 //
 // Waiters cannot cancel while a fetch is in flight: a caller's own ctx is not
 // honored, and it waits for the shared fetch to finish, for at most 30s.
@@ -67,12 +68,7 @@ func (sm *Cacher) GetSecretValue(ctx context.Context, name string) (string, erro
 }
 
 // fetchContext returns a context for a shared fetch: it keeps ctx's values,
-// ignores its cancellation, and expires at ctx's deadline or after
-// cacherFetchTimeout, whichever is sooner.
+// ignores its cancellation and deadline, and expires after cacherFetchTimeout.
 func fetchContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(cacherFetchTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	return context.WithTimeout(context.WithoutCancel(ctx), cacherFetchTimeout)
 }

@@ -19,6 +19,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -79,47 +80,60 @@ func waitForParkedCacherCall(t *testing.T) {
 	t.Fatal("timed out waiting for a caller to park on the in-flight fetch")
 }
 
+// slowSM blocks each call until release is closed, then takes delay to
+// answer, failing with ctx's error if ctx ends first.
+type slowSM struct {
+	delay   time.Duration
+	started chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (s *slowSM) GetSecretValue(ctx context.Context, _ string) (string, error) {
+	if s.calls.Add(1) == 1 {
+		close(s.started)
+	}
+	<-s.release
+	select {
+	case <-time.After(s.delay):
+		return "s3cret", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
 func TestFetchContextDeadline(t *testing.T) {
 	t.Parallel()
 
-	later := time.Now().Add(time.Hour)
-	// earlier is before the fetch timeout, but far enough out that the fetch
-	// context is still live when checked.
-	earlier := time.Now().Add(cacherFetchTimeout / 3)
-	wantFetchTimeout := func() (time.Time, time.Time) {
-		now := time.Now()
-		return now.Add(cacherFetchTimeout - time.Second), now.Add(cacherFetchTimeout + 5*time.Second)
-	}
+	// The fetch always runs for cacherFetchTimeout, whatever the first
+	// caller's deadline.
 	cases := []struct {
 		name string
 		ctx  func() (context.Context, context.CancelFunc)
-		want func() (time.Time, time.Time)
 	}{
 		{
 			name: "no deadline",
 			ctx:  func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
-			want: wantFetchTimeout,
 		},
 		{
 			name: "earlier deadline",
 			ctx: func() (context.Context, context.CancelFunc) {
-				return context.WithDeadline(context.Background(), earlier)
+				return context.WithTimeout(context.Background(), 5*time.Millisecond)
 			},
-			want: func() (time.Time, time.Time) { return earlier, earlier },
 		},
 		{
-			// The fetch never outlives cacherFetchTimeout, even when the
-			// first caller would wait longer.
 			name: "later deadline",
-			ctx:  func() (context.Context, context.CancelFunc) { return context.WithDeadline(context.Background(), later) },
-			want: wantFetchTimeout,
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), time.Hour)
+			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			wantMin, wantMax := tc.want()
+			now := time.Now()
+			wantMin, wantMax := now.Add(cacherFetchTimeout-time.Second), now.Add(cacherFetchTimeout+5*time.Second)
 			ctx, cancelCaller := tc.ctx()
 			fctx, cancel := fetchContext(ctx)
 			defer cancel()
@@ -134,6 +148,51 @@ func TestFetchContextDeadline(t *testing.T) {
 			}
 		})
 	}
+
+	// An owner with only a few milliseconds left must not fail a waiter that
+	// coalesced onto its fetch.
+	t.Run("short owner deadline", func(t *testing.T) {
+		t.Parallel()
+
+		underlying := &slowSM{delay: 50 * time.Millisecond, started: make(chan struct{}), release: make(chan struct{})}
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(underlying.release) }) }
+		t.Cleanup(release)
+
+		sm, err := WrapCacher(context.Background(), underlying, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ownerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+		defer cancel()
+		go func() { _, _ = sm.GetSecretValue(ownerCtx, "k") }()
+		<-underlying.started
+
+		type result struct {
+			val string
+			err error
+		}
+		waiter := make(chan result, 1)
+		go func() {
+			v, err := sm.GetSecretValue(context.Background(), "k")
+			waiter <- result{v, err}
+		}()
+		waitForParkedCacherCall(t)
+		release()
+
+		select {
+		case r := <-waiter:
+			if r.err != nil || r.val != "s3cret" {
+				t.Errorf("waiter: got (%q, %v), want (%q, nil)", r.val, r.err, "s3cret")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("waiter did not return")
+		}
+		if got := underlying.calls.Load(); got != 1 {
+			t.Errorf("underlying called %d times, want 1", got)
+		}
+	})
 }
 
 func TestCacherCancelledCallerDoesNotFailOthers(t *testing.T) {
