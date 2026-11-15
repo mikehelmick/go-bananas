@@ -72,7 +72,8 @@ r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets))).Methods(http
   has not run yet, so a page rendered there has no CSRF token. See
   [Sessions & CSRF](sessions-and-csrf#absolute-session-lifetime). If you roll
   back to v1.0.x, sessions still decode there but this created-at tracking is
-  ignored, and split values are dropped once in each direction (see
+  ignored. Split values are kept, but v1.0.x joins them without checking the
+  binding, and returning to v1.1 drops them once (see
   [Downgrading to v1.0.x](sessions-and-csrf#downgrading-to-v10x)).
 - **`PopulateTemplateVariables` comes after the session middleware** so the flash
   data and CSRF helpers are already on the template map.
@@ -129,7 +130,8 @@ r.Use(middleware.SecureHeaders(devMode, middleware.ServerTypeHTML,
 The [example app](https://github.com/mikehelmick/go-bananas/tree/main/examples/ssr-oidc)
 does this outside dev mode: it passes `WithAllowedHosts` with its
 `ALLOWED_HOSTS` and `WithSSLHost` with the host of `SERVER_ENDPOINT`, when each
-is set. Pin your own app the same way.
+is set, and outside dev mode it logs a warning at startup when `SecureHeaders`
+gets neither. Pin your own app the same way.
 
 ## Template variables and `serverEndpoint`
 

@@ -77,11 +77,11 @@ JSON-valued secret).
 ### Caching and cancellation
 
 `WrapCacher` coalesces concurrent lookups of the same secret into one fetch. That
-shared fetch is **detached from the first caller's cancellation**: it keeps the
-caller's context values but is capped at 30 seconds. It ends at the first
-caller's deadline if that is sooner, and a later deadline never extends it.
-Cancelling one request therefore doesn't fail the others waiting on the same
-secret, and a hung backend is bounded.
+shared fetch is **detached from the first caller's cancellation and deadline**:
+it keeps the caller's context values but always runs with a fixed 30-second
+timeout. No caller's deadline shortens or extends it. Cancelling one request, or
+one that is close to its deadline, therefore doesn't fail the others waiting on
+the same secret, and a hung backend is bounded.
 
 The trade-offs:
 
