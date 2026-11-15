@@ -70,7 +70,10 @@ r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets))).Methods(http
   so an expired session is cleared before its CSRF token is checked or handed
   to templates. Its `onExpired` handler should redirect, not render: `HandleCSRF`
   has not run yet, so a page rendered there has no CSRF token. See
-  [Sessions & CSRF](sessions-and-csrf#absolute-session-lifetime).
+  [Sessions & CSRF](sessions-and-csrf#absolute-session-lifetime). If you roll
+  back to v1.0.x, sessions still decode there but this created-at tracking is
+  ignored, and split values are dropped once in each direction (see
+  [Downgrading to v1.0.x](sessions-and-csrf#downgrading-to-v10x)).
 - **`PopulateTemplateVariables` comes after the session middleware** so the flash
   data and CSRF helpers are already on the template map.
 - **`MutateMethod` wraps the router** so the overridden method is what mux uses
@@ -122,6 +125,11 @@ r.Use(middleware.SecureHeaders(devMode, middleware.ServerTypeHTML,
 	middleware.WithTrustedHostHeaders("X-Forwarded-Host"),
 	middleware.WithAllowedHosts("app.example.com", "www.example.com")))
 ```
+
+The [example app](https://github.com/mikehelmick/go-bananas/tree/main/examples/ssr-oidc)
+does this outside dev mode: it passes `WithAllowedHosts` with its
+`ALLOWED_HOSTS` and `WithSSLHost` with the host of `SERVER_ENDPOINT`, when each
+is set. Pin your own app the same way.
 
 ## Template variables and `serverEndpoint`
 

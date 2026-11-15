@@ -78,11 +78,19 @@ JSON-valued secret).
 
 `WrapCacher` coalesces concurrent lookups of the same secret into one fetch. That
 shared fetch is **detached from the first caller's cancellation**: it keeps the
-caller's context values but runs under its own deadline of 30 seconds (or the
-first caller's deadline, if that is later). Cancelling one request therefore
-doesn't fail the others waiting on the same secret, and a hung backend is
-bounded. The trade-off: a caller whose own context is cancelled while a fetch is
-in flight still waits for that fetch to finish.
+caller's context values but is capped at 30 seconds. It ends at the first
+caller's deadline if that is sooner, and a later deadline never extends it.
+Cancelling one request therefore doesn't fail the others waiting on the same
+secret, and a hung backend is bounded.
+
+The trade-offs:
+
+- A waiting caller's own context is not honored. A caller whose context is
+  cancelled while a fetch is in flight still waits for that fetch to finish, for
+  up to 30 seconds.
+- The first caller's context values are used for a result shared with every
+  waiter, so a provider **must not authorize per caller through context values**
+  (for example, a caller identity carried on the context).
 
 ## Provider notes
 

@@ -78,12 +78,21 @@ The second argument to `RequireSession` names session keys whose values are
 large enough to need their own cookie (browsers cap a cookie at about 4 KB). Each
 such key is stored in a companion `_gbs-<key>` cookie that is **bound to the main
 session** by a random ID: it is joined only alongside the session that issued it,
-and resetting or deleting the main session unbinds or expires it. One split key
-per router is supported.
+and resetting or deleting the main session unbinds or expires it. One session
+can split several keys. The companion cookie name doesn't include the session
+name, so two named sessions (`RequireNamedSession`) on the same router must not
+split the same key.
 
 Split cookies written by v1.0.x carry no binding and are dropped once on upgrade.
 During a rolling deploy, a visitor moving between v1.0.x and v1.1 instances loses
 split values each time, so finish the rollout before relying on them.
+
+### Downgrading to v1.0.x
+
+v1.0.x can still read v1.1 session cookies: the cookie format is unchanged and
+the values v1.1 adds use types v1.0.x already registers. Going back loses only
+v1.1-only state. Split values are dropped once in each direction, and v1.0.x
+ignores the created-at time that `CheckSessionMaxAge` reads.
 
 ### Idle timeout
 

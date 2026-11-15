@@ -61,7 +61,9 @@ How it behaves under concurrency:
 - A lookup must not call `WriteThruLookup` for its own key, or it deadlocks.
 
 It backs the secret-manager cacher, which uses the same detached-context
-pattern with a 30-second limit (see
+pattern. Its shared fetch is capped at 30 seconds and never extended by a
+caller's deadline. A waiting caller's context is not honored, and providers must
+not authorize per caller through context values (see
 [Secrets & keys](secrets-and-keys#caching-and-cancellation)).
 
 ## Logging
