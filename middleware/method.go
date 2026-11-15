@@ -45,6 +45,12 @@ const maxMethodOverrideBodyBytes = 64 << 10
 // is left intact for later handlers, and on an override r.PostForm holds the
 // parsed body so CSRF tokens and form fields remain readable.
 //
+// If earlier middleware has already parsed the form, r.PostForm is used as
+// is and the size and strictness rules above do not apply. On an override,
+// later form parsing (including form.Bind's WithMaxBodyBytes) is a no-op
+// because r.PostForm is already set, so overridden requests are bounded by
+// the 64 KB cap here rather than by later parse limits.
+//
 // To affect routing, MutateMethod must wrap the router:
 //
 //	handler := middleware.MutateMethod()(router)

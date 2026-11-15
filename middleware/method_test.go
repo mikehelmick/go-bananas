@@ -170,6 +170,32 @@ func TestMutateMethodBodyCap(t *testing.T) {
 		}
 	})
 
+	t.Run("urlencoded_over_cap_chunked", func(t *testing.T) {
+		t.Parallel()
+
+		// ContentLength -1 (chunked) skips the early length check, so the
+		// read-then-replay path must handle the over-cap body.
+		value := strings.Repeat("x", 1<<20)
+		body := "a=" + value + "&_method=DELETE"
+		r := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(strings.NewReader(body)))
+		r.ContentLength = -1
+		r.Header.Set("Content-Type", formContentType)
+
+		var method, a string
+		h := MutateMethod()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			method = r.Method
+			a = r.PostFormValue("a")
+		}))
+		h.ServeHTTP(httptest.NewRecorder(), r)
+
+		if method != http.MethodPost {
+			t.Errorf("method = %q, want POST", method)
+		}
+		if a != value {
+			t.Errorf("downstream form value a has length %d, want %d", len(a), len(value))
+		}
+	})
+
 	t.Run("under_cap_body_preserved", func(t *testing.T) {
 		t.Parallel()
 
