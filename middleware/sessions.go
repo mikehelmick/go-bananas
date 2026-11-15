@@ -70,6 +70,15 @@ func RequireNamedSession(store sessions.Store, name string, splitValues []any, h
 //
 // Split cookies written by go-bananas v1.0.1 and earlier carry no binding, so
 // their values are dropped once after upgrading and must be set again.
+// A rollback to v1.0.1 keeps split values (v1.0.1 joins split cookies
+// without checking the binding, so it is exposed to the replay bug again);
+// returning to this version then drops them once, because v1.0.1 rewrites them
+// unbound. During a rolling deploy this repeats as a visitor moves between
+// versions, so finish the rollout before relying on split values.
+//
+// On a router with split values, every session (including anonymous ones)
+// carries the "_gbs_binding" key, so code that treats an empty Values map as
+// "logged out" should check for its own keys instead.
 func RequireSession(store sessions.Store, splitValues []any, h *render.Renderer) mux.MiddlewareFunc {
 	return buildHandler(store, defaultSessionName, splitValues, h)
 }
