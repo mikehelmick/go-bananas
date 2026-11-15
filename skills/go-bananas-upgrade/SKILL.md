@@ -31,9 +31,11 @@ go version
 
 v1.1.0 is a security release. It changes defaults to safe values and adds
 opt-ins. Ciphertext and cookie formats are unchanged, so a downgrade stays
-possible: v1.0.x can decode v1.1 session cookies. Going back loses only v1.1-only
-state: split values are dropped once in each direction (entry 10), and v1.0.x
-ignores the created-at tracking that `CheckSessionMaxAge` uses. Each entry
+possible: v1.0.x can decode v1.1 session cookies. A downgrade **keeps** split
+values, but v1.0.x joins them without checking the binding, so it is exposed to
+the split-cookie replay bug again; returning to v1.1 drops split values once
+(entry 10). v1.0.x also ignores the created-at tracking that
+`CheckSessionMaxAge` uses. Each entry
 below gives **Grep**, **Affected if** and **Fix**. Entries marked
 **[decision]** need a human choice; don't pick silently.
 
@@ -114,11 +116,16 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
   app.HandleFunc("/", home).Methods(http.MethodGet) // every other route goes on app
   ```
 
-  **Move every existing route registration from `r` to `app`.** A route left on
-  `r` runs **without CSRF protection**, because `HandleCSRF` is no longer on
-  `r`. After the change, `grep -rnE --include='*.go' '\br\.(HandleFunc|Handle|PathPrefix|Path|Methods)\(' .`
+  **Move every existing route registration from the root router to `app`.** A
+  route left on the root router runs **without CSRF protection**, because
+  `HandleCSRF` is no longer on it. The root router isn't always named `r`, so
+  first find its variable name:
+  `grep -rnE --include='*.go' '\w+ *:?= *mux\.NewRouter\(\)' .`. Then, with
+  `ROOT` set to that name, `grep -rnE --include='*.go' "\b$ROOT\.(HandleFunc|Handle|PathPrefix|Path|Methods)\(" .`
   should show only the `upload` and `app` subrouter setup (and any read-only
-  static `PathPrefix`).
+  static `PathPrefix`). Alternatively, list every registration with
+  `grep -rnE --include='*.go' '\.(HandleFunc|Handle)\(' .` and check that each
+  one is on a subrouter variable (`app`, `upload`, or one derived from them).
 
   **[decision]** the upload limit. Docs: [Request body limit](https://mikehelmick.github.io/go-bananas/docs/sessions-and-csrf/#request-body-limit).
 
@@ -252,12 +259,16 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 - Affected if you use split values: `_gbs-<key>` cookies from v1.0.x are
   **dropped once at upgrade**, so users lose that value (for example a stored ID
   token, which may force a re-login). During a **rolling deploy**, a visitor who
-  moves between v1.0.x and v1.1 instances loses it each time. A **downgrade** to
-  v1.0.x drops v1.1 split cookies once the same way, though v1.0.x still reads
-  the main v1.1 session cookie. One session may split several keys, but two named
-  sessions on the same router must not split the same key: the `_gbs-<key>`
-  cookie name doesn't include the session name. Deleting the session
-  (`Options.MaxAge = -1`) now also expires its split cookies.
+  moves from a v1.0.x instance back to a v1.1 instance loses it each time. A
+  **downgrade** to v1.0.x keeps split values, but v1.0.x joins them without
+  checking the binding (so the replay bug is back) and rewrites them unbound,
+  so returning to v1.1 drops them once. The binding ID is stored in the session
+  values under the reserved string key `"_gbs_binding"`; also affected if the
+  app uses that key itself (`grep -rn '_gbs_binding' .`). One session may split
+  several keys, but two named sessions on the same router must not split the
+  same key: the `_gbs-<key>` cookie name doesn't include the session name.
+  Deleting the session (`Options.MaxAge = -1`) now also expires its split
+  cookies.
 - Fix: make handlers tolerate a missing split value, and **[decision]** finish
   the rollout quickly (or drain old instances) before relying on split values.
   Docs: [Split values](https://mikehelmick.github.io/go-bananas/docs/sessions-and-csrf/#split-values).
@@ -344,13 +355,13 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
   by `CreateKeyVersion` are unaffected. (The fix closes a path-traversal bug.)
 - Fix: rename such files to decimal digits.
 
-**16. `secrets` Cacher fetches are detached from request cancellation.**
+**16. `secrets` Cacher fetches are detached from request cancellation and deadline.**
 
 - Grep: `grep -rn --include='*.go' -E 'WrapCacher|SecretCacheTTL|SECRET_CACHE_TTL' .`
 - Affected if you rely on a cancelled request aborting a slow secret fetch. The
   shared fetch keeps the first caller's context values but ignores its
-  cancellation. It is capped at 30s, or the first caller's deadline if sooner;
-  a later deadline never extends it. A waiting caller's own ctx isn't honored:
+  cancellation and deadline: it always runs with a fixed 30s timeout, whatever
+  any caller's deadline is. A waiting caller's own ctx isn't honored:
   it can't cancel and waits for the shared fetch, for up to 30s. Also affected
   if the wrapped provider authorizes per caller through ctx values (for example
   a caller identity on the context): the first caller's values are used for a
