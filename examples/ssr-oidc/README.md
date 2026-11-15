@@ -46,8 +46,8 @@ Configuration is via environment variables (all optional):
 | `OIDC_ISSUER` | _(unset)_ | OIDC discovery URL; when set, enables `/login` |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | | OIDC client config |
 | `ADMIN_EMAILS` | _(unset)_ | Comma-separated allow-list for `/admin`; unset means nobody is an admin, so `/admin` answers 403. A match counts only when the provider sets `email_verified: true` |
-| `SERVER_ENDPOINT` | _(unset)_ | Canonical base URL, such as `https://app.example.com`, exposed to templates as `serverEndpoint`. Set it in production |
-| `ALLOWED_HOSTS` | _(unset)_ | Comma-separated bare hosts (`app.example.com`, optionally with a port) that `serverEndpoint` may be derived from when `SERVER_ENDPOINT` is unset. With neither set, `serverEndpoint` is empty outside dev mode, because the `Host` header is client-chosen |
+| `SERVER_ENDPOINT` | _(unset)_ | Canonical base URL, such as `https://app.example.com`, exposed to templates as `serverEndpoint`. Set it in production. Outside dev mode, its host also pins the HTTPS redirect |
+| `ALLOWED_HOSTS` | _(unset)_ | Comma-separated bare hosts (`app.example.com`, optionally with a port) that `serverEndpoint` may be derived from when `SERVER_ENDPOINT` is unset. With neither set, `serverEndpoint` is empty outside dev mode, because the `Host` header is client-chosen. Outside dev mode, `SecureHeaders` also rejects any other `Host` with 400 |
 
 On first run a random 64-byte cookie key is generated and written under
 `SECRETS_DIR`, then read back through `secrets.NewFilesystem` on every request via

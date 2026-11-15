@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -274,6 +275,60 @@ func TestHealthJSON(t *testing.T) {
 // TestSessionCookieAttributes checks the store wiring: dev mode serves plain
 // HTTP, so its cookie drops Secure; production cookies are always Secure.
 // Both are HttpOnly and SameSite=Lax.
+// TestSecureHeadersPinsAllowedHosts checks that, outside dev mode, a request
+// with a Host not in ALLOWED_HOSTS is rejected with 400, on matched routes and
+// on the 404 handler alike, while dev mode accepts any host.
+func TestSecureHeadersPinsAllowedHosts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		devMode string
+		host    string
+		path    string
+		https   bool
+		want    int
+		wantLoc string
+	}{
+		{name: "prod_spoofed_host", devMode: "false", host: "evil.example", path: "/healthz", https: true, want: http.StatusBadRequest},
+		{name: "prod_spoofed_host_404", devMode: "false", host: "evil.example", path: "/nope", https: true, want: http.StatusBadRequest},
+		{name: "prod_spoofed_host_http", devMode: "false", host: "evil.example", path: "/healthz", want: http.StatusBadRequest},
+		{name: "prod_allowed_host", devMode: "false", host: "app.example.com", path: "/healthz", https: true, want: http.StatusOK},
+		{name: "prod_redirect_pinned", devMode: "false", host: "app.example.com", path: "/healthz", want: http.StatusMovedPermanently, wantLoc: "https://canonical.example.com/healthz"},
+		{name: "dev_spoofed_host", devMode: "true", host: "evil.example", path: "/healthz", want: http.StatusOK},
+		{name: "dev_spoofed_host_404", devMode: "true", host: "evil.example", path: "/nope", want: http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SECRETS_DIR", t.TempDir())
+			t.Setenv("DEV_MODE", tc.devMode)
+			t.Setenv("OIDC_ISSUER", "")
+			t.Setenv("ALLOWED_HOSTS", "app.example.com")
+			t.Setenv("SERVER_ENDPOINT", "https://canonical.example.com")
+
+			ctx := context.Background()
+			var cfg appConfig
+			if err := envconfig.Process(ctx, &cfg); err != nil {
+				t.Fatalf("envconfig.Process: %v", err)
+			}
+			a, err := newApp(ctx, &cfg)
+			if err != nil {
+				t.Fatalf("newApp: %v", err)
+			}
+
+			r := httptest.NewRequest(http.MethodGet, "http://"+tc.host+tc.path, nil)
+			if tc.https {
+				r.TLS = &tls.ConnectionState{}
+			}
+			w := httptest.NewRecorder()
+			a.router().ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("GET %s with Host %s: status = %d, want %d", tc.path, tc.host, w.Code, tc.want)
+			}
+			if got := w.Header().Get("Location"); got != tc.wantLoc {
+				t.Errorf("Location = %q, want %q", got, tc.wantLoc)
+			}
+		})
+	}
+}
+
 func TestSessionCookieAttributes(t *testing.T) {
 	for _, tc := range []struct {
 		devMode string

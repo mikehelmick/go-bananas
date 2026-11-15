@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -100,7 +101,9 @@ type appConfig struct {
 	// https://app.example.com) exposed to templates as serverEndpoint. Set it
 	// in production. AllowedHosts is the fallback when it is unset: a
 	// comma-separated list of bare hosts the endpoint may be derived from.
-	// With neither, serverEndpoint is empty outside dev mode.
+	// With neither, serverEndpoint is empty outside dev mode. Outside dev
+	// mode, AllowedHosts also makes SecureHeaders reject any other Host with
+	// 400, and ServerEndpoint's host pins the HTTPS redirect.
 	ServerEndpoint string   `env:"SERVER_ENDPOINT"`
 	AllowedHosts   []string `env:"ALLOWED_HOSTS"`
 
@@ -243,7 +246,8 @@ func (a *app) router() http.Handler {
 	r.Use(middleware.PopulateTraceID())
 	r.Use(middleware.PopulateLogger(logging.DefaultLogger()))
 	r.Use(middleware.LogRequests())
-	r.Use(middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML))
+	secureOpts := a.secureOptions()
+	r.Use(middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML, secureOpts...))
 	r.Use(middleware.ProcessNonce())
 	r.Use(middleware.ContentSecurityPolicy(csp))
 	r.Use(middleware.GzipResponse())
@@ -314,7 +318,7 @@ func (a *app) router() http.Handler {
 	// mux runs r.Use middleware only for a matched route, so the 404 and 405
 	// handlers get the security headers by wrapping them directly.
 	errorHeaders := func(h http.HandlerFunc) http.Handler {
-		return middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML)(
+		return middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML, secureOpts...)(
 			middleware.ProcessNonce()(middleware.ContentSecurityPolicy(csp)(h)))
 	}
 	r.NotFoundHandler = errorHeaders(func(w http.ResponseWriter, req *http.Request) {
@@ -323,6 +327,24 @@ func (a *app) router() http.Handler {
 	r.MethodNotAllowedHandler = errorHeaders(a.handleMethodNotAllowed)
 
 	return r
+}
+
+// secureOptions pins SecureHeaders to the configured hosts outside dev mode: a
+// request whose Host is not in ALLOWED_HOSTS gets 400, and HTTPS redirects go
+// to SERVER_ENDPOINT's host rather than the request's. Dev mode accepts any
+// host.
+func (a *app) secureOptions() []middleware.SecureOption {
+	if a.devMode {
+		return nil
+	}
+	var opts []middleware.SecureOption
+	if len(a.allowedHosts) > 0 {
+		opts = append(opts, middleware.WithAllowedHosts(a.allowedHosts...))
+	}
+	if u, err := url.Parse(a.serverEndpoint); err == nil && u.Host != "" {
+		opts = append(opts, middleware.WithSSLHost(u.Host))
+	}
+	return opts
 }
 
 // injectPrincipal exposes the current user (if any) to templates as "principal".
