@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -25,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/cookiejar"
@@ -37,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mikehelmick/go-bananas/logging"
 	"github.com/sethvargo/go-envconfig"
 )
 
@@ -324,6 +327,59 @@ func TestSecureHeadersPinsAllowedHosts(t *testing.T) {
 			}
 			if got := w.Header().Get("Location"); got != tc.wantLoc {
 				t.Errorf("Location = %q, want %q", got, tc.wantLoc)
+			}
+		})
+	}
+}
+
+// TestHostPinningStartupWarnings checks that, outside dev mode, startup warns
+// when SecureHeaders has no host pin, and when SERVER_ENDPOINT has no scheme.
+func TestHostPinningStartupWarnings(t *testing.T) {
+	const (
+		unpinned = "HTTPS redirects are not host-pinned"
+		noScheme = "SERVER_ENDPOINT has no scheme"
+	)
+	for _, tc := range []struct {
+		name         string
+		devMode      string
+		allowedHosts string
+		endpoint     string
+		want, absent []string
+	}{
+		{name: "neither", devMode: "false", want: []string{unpinned}, absent: []string{noScheme}},
+		{name: "endpoint_no_scheme", devMode: "false", endpoint: "app.example.com", want: []string{unpinned, noScheme}},
+		{name: "endpoint_no_scheme_allowed_hosts", devMode: "false", allowedHosts: "app.example.com", endpoint: "app.example.com", want: []string{noScheme}, absent: []string{unpinned}},
+		{name: "allowed_hosts", devMode: "false", allowedHosts: "app.example.com", absent: []string{unpinned, noScheme}},
+		{name: "endpoint", devMode: "false", endpoint: "https://app.example.com", absent: []string{unpinned, noScheme}},
+		{name: "dev_mode", devMode: "true", absent: []string{unpinned, noScheme}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SECRETS_DIR", t.TempDir())
+			t.Setenv("DEV_MODE", tc.devMode)
+			t.Setenv("OIDC_ISSUER", "")
+			t.Setenv("ALLOWED_HOSTS", tc.allowedHosts)
+			t.Setenv("SERVER_ENDPOINT", tc.endpoint)
+
+			var buf bytes.Buffer
+			ctx := logging.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+			var cfg appConfig
+			if err := envconfig.Process(ctx, &cfg); err != nil {
+				t.Fatalf("envconfig.Process: %v", err)
+			}
+			if _, err := newApp(ctx, &cfg); err != nil {
+				t.Fatalf("newApp: %v", err)
+			}
+
+			logs := buf.String()
+			for _, w := range tc.want {
+				if !strings.Contains(logs, w) {
+					t.Errorf("startup log missing %q:\n%s", w, logs)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(logs, a) {
+					t.Errorf("startup log unexpectedly contains %q:\n%s", a, logs)
+				}
 			}
 		})
 	}

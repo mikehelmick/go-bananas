@@ -234,6 +234,7 @@ func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
 		a.oidc = oidc
 	}
 
+	a.warnHostPinning(ctx)
 	return a, nil
 }
 
@@ -341,10 +342,40 @@ func (a *app) secureOptions() []middleware.SecureOption {
 	if len(a.allowedHosts) > 0 {
 		opts = append(opts, middleware.WithAllowedHosts(a.allowedHosts...))
 	}
-	if u, err := url.Parse(a.serverEndpoint); err == nil && u.Host != "" {
-		opts = append(opts, middleware.WithSSLHost(u.Host))
+	if host := a.sslHost(); host != "" {
+		opts = append(opts, middleware.WithSSLHost(host))
 	}
 	return opts
+}
+
+// sslHost returns SERVER_ENDPOINT's host, or "" when it has none (unset,
+// unparsable, or missing a scheme, as in "app.example.com").
+func (a *app) sslHost() string {
+	u, err := url.Parse(a.serverEndpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+// warnHostPinning logs at startup, outside dev mode, when SecureHeaders gets
+// no host pin from secureOptions, and when SERVER_ENDPOINT has no scheme.
+func (a *app) warnHostPinning(ctx context.Context) {
+	if a.devMode {
+		return
+	}
+	logger := logging.FromContext(ctx)
+	if a.serverEndpoint != "" {
+		if u, err := url.Parse(a.serverEndpoint); err != nil || u.Scheme == "" {
+			logger.Warn("SERVER_ENDPOINT has no scheme, so it cannot pin HTTPS redirects; "+
+				"use a full URL such as https://app.example.com",
+				"serverEndpoint", a.serverEndpoint)
+		}
+	}
+	if len(a.allowedHosts) == 0 && a.sslHost() == "" {
+		logger.Warn("HTTPS redirects are not host-pinned: they go to the request's Host header. " +
+			"Set ALLOWED_HOSTS, or SERVER_ENDPOINT with a scheme and host.")
+	}
 }
 
 // injectPrincipal exposes the current user (if any) to templates as "principal".
