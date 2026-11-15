@@ -39,10 +39,34 @@ func WrapCacher(_ context.Context, sm SecretManager, ttl time.Duration) (SecretM
 	return &Cacher{sm: sm, cache: c}, nil
 }
 
+// cacherFetchTimeout bounds a shared fetch, which is detached from any one
+// caller's cancellation.
+const cacherFetchTimeout = 30 * time.Second
+
 // GetSecretValue returns the cached value if present and unexpired, otherwise it
 // fetches from the wrapped manager and caches the result.
+//
+// Concurrent calls for the same name share one fetch. The fetch runs on a
+// context derived from the first caller's ctx that keeps its values but is
+// detached from its cancellation, so cancelling one request does not fail the
+// others. It is bounded by cacherFetchTimeout, or by the first caller's
+// deadline if that is later. A caller's own ctx is not honored while a fetch is
+// in flight: it waits for the shared fetch to finish.
 func (sm *Cacher) GetSecretValue(ctx context.Context, name string) (string, error) {
 	return sm.cache.WriteThruLookup(name, func() (string, error) {
-		return sm.sm.GetSecretValue(ctx, name)
+		fctx, cancel := fetchContext(ctx)
+		defer cancel()
+		return sm.sm.GetSecretValue(fctx, name)
 	})
+}
+
+// fetchContext returns a context for a shared fetch: it keeps ctx's values,
+// ignores its cancellation, and expires after cacherFetchTimeout or at ctx's
+// deadline, whichever is later.
+func fetchContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(cacherFetchTimeout)
+	if d, ok := ctx.Deadline(); ok && d.After(deadline) {
+		deadline = d
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
 }
