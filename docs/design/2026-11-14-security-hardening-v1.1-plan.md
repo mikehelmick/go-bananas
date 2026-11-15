@@ -193,7 +193,7 @@ Steps:
     - `{SameSite: http.SameSiteDefaultMode}` → Lax.
     - `{SameSite: http.SameSiteNoneMode}` → None and Secure.
     - `WithInsecureCookies()` → not Secure.
-    - `WithInsecureCookies()` + `SameSite=None` → `Save` returns an error containing `"SameSite=None requires Secure"`.
+    - `WithInsecureCookies()` + `SameSite=None` → Secure is forced at construction (as built; D18 changed from a `Save` error).
   - `TestCheckSessionMaxAge`: created-at 2h ago with maxAge 1h → `onExpired` runs and the session is cleared; created-at 10m ago → next runs; a session missing created-at is treated as created now and stamped.
   - `TestNewHTTPServerTimeouts`: `ReadHeaderTimeout==10s`, `ReadTimeout==5*time.Minute`, `IdleTimeout==120*time.Second`, `WriteTimeout==0`.
 - [ ] Run them. Expected: FAIL.
