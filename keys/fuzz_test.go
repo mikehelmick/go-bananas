@@ -17,6 +17,12 @@ package keys
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"strings"
 	"testing"
 )
@@ -84,6 +90,59 @@ func FuzzFilesystemDecrypt(f *testing.F) {
 		}
 		if !strings.Contains(err.Error(), "bad version") {
 			t.Fatalf("Decrypt with version %q: got %v, want a bad version error", version, err)
+		}
+	})
+}
+
+func FuzzParseECDSAPublicKey(f *testing.F) {
+	pemFor := func(pub any) string {
+		der, err := x509.MarshalPKIXPublicKey(pub)
+		if err != nil {
+			f.Fatal(err)
+		}
+		return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	}
+	for _, c := range []elliptic.Curve{elliptic.P256(), elliptic.P384()} {
+		k, err := ecdsa.GenerateKey(c, rand.Reader)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(pemFor(&k.PublicKey))
+	}
+	edPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(pemFor(edPub))
+	f.Add("")
+	f.Add("-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----\n")
+	f.Add("-----BEGIN PUBLIC KEY-----\nMAA=\n-----END PUBLIC KEY-----\n")
+	f.Add("not pem")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		pub, err := ParseECDSAPublicKey(s)
+		if err != nil {
+			if pub != nil {
+				t.Fatalf("ParseECDSAPublicKey returned a key with error %v", err)
+			}
+			return
+		}
+		if pub == nil {
+			t.Fatal("ParseECDSAPublicKey returned nil key and nil error")
+		}
+		// ParseECDSAPublicKey promises an ECDSA key, not a P-256 one: it accepts
+		// any curve x509 supports, and callers such as keys/vault check the key
+		// type separately. So assert a supported NIST curve and a valid point.
+		switch pub.Curve {
+		case elliptic.P224():
+			// crypto/ecdh has no P-224; x509 already validated the point.
+			return
+		case elliptic.P256(), elliptic.P384(), elliptic.P521():
+		default:
+			t.Fatalf("ParseECDSAPublicKey returned unexpected curve %v", pub.Curve.Params().Name)
+		}
+		if _, err := pub.ECDH(); err != nil {
+			t.Fatalf("ParseECDSAPublicKey returned an invalid point: %v", err)
 		}
 	})
 }
