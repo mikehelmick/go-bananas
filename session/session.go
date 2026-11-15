@@ -40,6 +40,7 @@ func init() {
 }
 
 const (
+	sessionKeyCreatedAt    = sessionKey("createdAt")
 	sessionKeyCSRFToken    = sessionKey("csrfToken")
 	sessionKeyLastActivity = sessionKey("lastActivity")
 	sessionKeyNonce        = sessionKey("nonce")
@@ -112,6 +113,35 @@ func LastActivity(session *sessions.Session) time.Time {
 	i, ok := v.(int64)
 	if !ok || i == 0 {
 		delete(session.Values, sessionKeyLastActivity)
+		return time.Time{}
+	}
+	return time.Unix(i, 0)
+}
+
+// StoreCreatedAt stores the time the session was created, used to enforce an
+// absolute session lifetime (see middleware.CheckSessionMaxAge). A nil session
+// is a no-op.
+func StoreCreatedAt(session *sessions.Session, t time.Time) {
+	if session == nil {
+		return
+	}
+	if session.Values == nil {
+		session.Values = make(map[any]any)
+	}
+	session.Values[sessionKeyCreatedAt] = t.Unix()
+}
+
+// CreatedAt returns the time the session was created, or the zero time if
+// absent or malformed (in which case it is also cleared). Sessions issued
+// before go-bananas v1.1.0 have no created-at value.
+func CreatedAt(session *sessions.Session) time.Time {
+	v := sessionGet(session, sessionKeyCreatedAt)
+	if v == nil {
+		return time.Time{}
+	}
+	i, ok := v.(int64)
+	if !ok || i == 0 {
+		delete(session.Values, sessionKeyCreatedAt)
 		return time.Time{}
 	}
 	return time.Unix(i, 0)

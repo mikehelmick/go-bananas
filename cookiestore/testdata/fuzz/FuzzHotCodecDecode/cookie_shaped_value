@@ -1,0 +1,4 @@
+go test fuzz v1
+string("session")
+string("MTIzNDU2Nzg5MHxhYmNkZWZ8")
+uint(5)

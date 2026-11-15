@@ -77,6 +77,37 @@ func TestLastActivity(t *testing.T) {
 	}
 }
 
+func TestCreatedAt(t *testing.T) {
+	t.Parallel()
+
+	// A nil session is tolerated by both accessors.
+	StoreCreatedAt(nil, time.Now())
+	if got := CreatedAt(nil); !got.IsZero() {
+		t.Fatalf("CreatedAt(nil) = %v, want zero", got)
+	}
+
+	// Sessions from v1.0.x carry no created-at value.
+	s := newSession()
+	if got := CreatedAt(s); !got.IsZero() {
+		t.Fatalf("expected zero time when absent, got %v", got)
+	}
+
+	at := time.Now().Add(-time.Hour)
+	StoreCreatedAt(s, at)
+	if got := CreatedAt(s); got.Unix() != at.Unix() {
+		t.Fatalf("CreatedAt = %v, want %v", got.Unix(), at.Unix())
+	}
+
+	// A malformed value is cleared and reported as absent.
+	s.Values[sessionKeyCreatedAt] = "yesterday"
+	if got := CreatedAt(s); !got.IsZero() {
+		t.Fatalf("expected zero time for malformed value, got %v", got)
+	}
+	if _, ok := s.Values[sessionKeyCreatedAt]; ok {
+		t.Fatal("expected malformed created-at to be cleared")
+	}
+}
+
 func TestNonceAndRegion(t *testing.T) {
 	t.Parallel()
 

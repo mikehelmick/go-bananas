@@ -19,34 +19,62 @@
 // fixed at construction time. Instead they are supplied by an [EntropyFunc] that
 // is consulted on every encode and decode, so keys can be rotated (or sourced
 // from a secret/key manager) without restarting the process.
+//
+// Cookie sessions cannot be revoked one at a time: a copied cookie stays valid
+// until it expires or its key is rotated out. Bound how long a session lives
+// with middleware.CheckSessionMaxAge.
 package cookiestore
 
 import (
+	"net/http"
+
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
 )
 
 // New returns a new session store whose cookies are signed and encrypted with
-// keys obtained from fn. If opts is nil a default set of options is used; in
-// either case Path defaults to "/" and MaxAge defaults to 30 days when unset.
-func New(fn EntropyFunc, opts *sessions.Options) sessions.Store {
-	if opts == nil {
-		opts = new(sessions.Options)
+// keys obtained from fn. The concrete type is [*sessions.CookieStore].
+//
+// opts is copied, never modified. In the copy, Path defaults to "/", MaxAge to
+// 30 days, and SameSite to Lax when it is unset or [http.SameSiteDefaultMode].
+// HttpOnly is always set. Secure is always set unless [WithInsecureCookies] is
+// passed, in which case it is cleared. The one exception: SameSite=None always
+// forces Secure, even with [WithInsecureCookies], because browsers drop
+// SameSite=None cookies that are not Secure.
+//
+// These defaults are applied once, here. They are not enforced later: a
+// handler that edits a session's Options (session.Options), or code that edits
+// the returned store's CookieStore.Options, can still turn off HttpOnly or
+// Secure, or set SameSite=None without Secure.
+func New(fn EntropyFunc, opts *sessions.Options, o ...Option) sessions.Store {
+	var cfg config
+	for _, opt := range o {
+		opt(&cfg)
 	}
-	if opts.Path == "" {
-		opts.Path = "/"
+
+	var options sessions.Options
+	if opts != nil {
+		options = *opts
 	}
-	if opts.MaxAge <= 0 {
-		opts.MaxAge = 30 * 86400 // 30d
+	if options.Path == "" {
+		options.Path = "/"
 	}
+	if options.MaxAge <= 0 {
+		options.MaxAge = 30 * 86400 // 30d
+	}
+	if options.SameSite == 0 || options.SameSite == http.SameSiteDefaultMode {
+		options.SameSite = http.SameSiteLaxMode
+	}
+	options.HttpOnly = true
+	options.Secure = !cfg.insecure || options.SameSite == http.SameSiteNoneMode
 
 	codec := &HotCodec{
 		entropyFunc: fn,
-		maxAge:      opts.MaxAge,
+		maxAge:      options.MaxAge,
 	}
 
 	return &sessions.CookieStore{
 		Codecs:  []securecookie.Codec{codec},
-		Options: opts,
+		Options: &options,
 	}
 }
