@@ -179,8 +179,9 @@ func MissingSession(w http.ResponseWriter, r *http.Request, h *render.Renderer) 
 
 // RealHostFromRequest finds the "best" host for the request. The host may be in
 // the request URL (when absolute) or in the Host header; when developing locally
-// it may be missing entirely. The scheme defaults to http for localhost and
-// https otherwise, and default ports are stripped.
+// it may be missing entirely. The scheme defaults to http for localhost
+// (localhost, 127.0.0.1 or ::1, with or without brackets) and https otherwise,
+// and default ports are stripped.
 func RealHostFromRequest(r *http.Request) string {
 	u := r.URL
 	scheme := u.Scheme
@@ -191,12 +192,16 @@ func RealHostFromRequest(r *http.Request) string {
 	if !u.IsAbs() {
 		hu := &url.URL{Host: r.Host}
 		host, port = hu.Hostname(), hu.Port()
+		// A bare IPv6 literal ("::1") has no brackets to split the port on.
+		if net.ParseIP(r.Host) != nil {
+			host, port = r.Host, ""
+		}
 	}
 
 	// Default to http on localhost, https elsewhere. The localhost check is not
 	// robust, but it is good enough.
 	if scheme == "" {
-		if host == "localhost" || host == "127.0.0.1" {
+		if isLocalhost(host) {
 			scheme = "http"
 		} else {
 			scheme = "https"
@@ -218,6 +223,16 @@ func RealHostFromRequest(r *http.Request) string {
 		return scheme + "://[" + host + "]"
 	}
 	return scheme + "://" + host
+}
+
+// isLocalhost reports whether host (without brackets or port) is "localhost",
+// 127.0.0.1 or the IPv6 loopback address ::1, in any spelling.
+func isLocalhost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.Equal(net.IPv4(127, 0, 0, 1)) || ip.Equal(net.IPv6loopback))
 }
 
 // TracedHTTPClient returns an HTTP client whose requests carry the X-Request-ID
