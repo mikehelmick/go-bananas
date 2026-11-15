@@ -58,7 +58,7 @@
 
 **Interfaces:**
 - Produces: `MutateMethod() mux.MiddlewareFunc`, signature unchanged.
-- Produces: unexported `allowedOverrideMethods = map[string]bool{PUT, PATCH, DELETE}`.
+- Produces: a `switch` over PUT/PATCH/DELETE in the unexported `overrideMethod` (as built; replaces the planned map).
 
 - [ ] **Write the failing tests** in `method_test.go`:
   - `TestMutateMethod` is table-driven over (orig method, body, query) → final method:
@@ -75,7 +75,7 @@
   - `TestMutateMethodBodyCap`: a POST urlencoded body of 1 MB followed by `&_method=DELETE` → method stays `POST`, and the handler can still read a capped body without panic. A multipart POST of 100 MB → `r.MultipartForm` is nil after `MutateMethod` (not parsed).
   - `TestMutateMethodUseChainCSRF`: use the session/CSRF setup from `sessions_csrf_test.go`. Router: `r.Use(MutateMethod(), RequireSession(...), HandleCSRF(h))`, `r.Handle("/transfer", ok).Methods("POST")`. A POST with body `amount=1&_method=GET` and no token → status 401 and the handler is not called.
 - [ ] Run `go test ./middleware -run 'TestMutateMethod' -count=1`. Expected: FAIL (GET row and chain test).
-- [ ] **Implement (D14):** only when `r.Method == http.MethodPost` and the media type of `Content-Type` is `application/x-www-form-urlencoded`: wrap `r.Body = http.MaxBytesReader(w, r.Body, 64<<10)`, call `r.ParseForm()` (on error, leave the method as POST), read `strings.ToUpper(r.PostForm.Get(formKeyMethod))`, and set `r.Method` only if the value is in `allowedOverrideMethods`. Doc comment must also say every route reachable through an override must be behind `HandleCSRF` (M8). Update the doc comment: the override is POST-only, from the body only, and limited to PUT/PATCH/DELETE. It must wrap the router (`MutateMethod()(router)`) to affect routing; under `r.Use` it changes only what handlers see.
+- [ ] **Implement (D14), as built after review:** only when `r.Method == http.MethodPost` and the media type is `application/x-www-form-urlencoded`. If `r.PostForm` is already set, use it. Otherwise read at most 64 KB+1 of the body into a buffer and restore `r.Body` (the bytes plus the rest of the original; Close reaches the original). Skip when `ContentLength` is over the cap. Parse with `url.ParseQuery` (an error means no override). On an override to PUT/PATCH/DELETE, set `r.PostForm` (net/http doesn't parse DELETE bodies) and then `r.Method`. Never call `ParseForm`, so downstream body semantics are unchanged. Doc comment must also say every route reachable through an override must be behind `HandleCSRF` (M8). Update the doc comment: the override is POST-only, from the body only, and limited to PUT/PATCH/DELETE. It must wrap the router (`MutateMethod()(router)`) to affect routing; under `r.Use` it changes only what handlers see.
 - [ ] **Fuzz test** `FuzzMutateMethodCSRF(f)` takes inputs `(method string, body string, query string)`. Build the same `r.Use` chain as the chain test and send the request without a token. Properties:
   - (a) If the handler ran, the original method was GET, HEAD or OPTIONS.
   - (b) The method the handler saw is either the original or one of {PUT, PATCH, DELETE}.

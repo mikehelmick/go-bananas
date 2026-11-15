@@ -22,7 +22,7 @@ exploitable issues.
 | D6 | Superseded by D16. | two-way |
 | D7 | `HandleCSRF` caps the request body before parsing the form, adjustable through a new variadic option `WithCSRFMaxBodyBytes`. The default is set by D22. | one-way |
 | D8 | All low-severity findings get fixed. `toJSON` is fixed, not removed. SECURITY.md is updated for v1. | two-way |
-| D9 | Native `go test -fuzz` targets sit next to the code, with seeds in `testdata/fuzz/`. Seeds replay in normal `go test`. `make fuzz` runs every target. A nightly workflow fuzzes 60s per target and uploads crashers. Each fix lands with a test that fails first. | two-way |
+| D9 | Native `go test -fuzz` targets sit next to the code, with seeds in `testdata/fuzz/`. Seeds replay in normal `go test`. `make fuzz` runs every target. A nightly workflow fuzzes 60s per target; a crash fails the job (no artifacts, D19). Each fix lands with a test that fails first. | two-way |
 | D10 | New `skills/go-bananas-upgrade/` skill analyzes an app for v1.1.0-affected usage and guides the migration. It is structured per version. | two-way |
 | D11 | Nothing is pushed until the work is done. Phases are stacks of local branches, each reviewed before the next is stacked on it. One push at the end, with approval. | two-way |
 | D12 | GitHub security advisories for #1 (CSRF bypass) and #2 (key traversal) are published at the v1.1.0 release. Claude drafts them and the owner publishes. | one-way |
@@ -31,12 +31,14 @@ exploitable issues.
 | D15 | `SecureHeaders` adds `WithSSLHost(host)` and `WithAllowedHosts(hosts...)`. `WithTrustedHostHeaders` is documented as requiring `WithAllowedHosts`. The fuzz property becomes "the Location host is in the allowlist". | two-way |
 | D16 | `TemplateConfig` gains `AllowedHosts []string`. Outside dev mode with an empty `ServerEndpoint`, the derived host is used only if it is allowlisted; otherwise it falls back to the first allowed host, or to empty plus the warning. The example sets `ServerEndpoint`. Supersedes D6. | two-way |
 | D17 | Sessions record a created-at time. A new opt-in `CheckSessionMaxAge(maxAge, onExpired)` middleware (modeled on `CheckSessionIdleNoAuth`) enforces an absolute lifetime. The docs say cookie sessions can't be revoked except by rotating keys. | two-way |
-| D18 | `cookiestore.New` copies the options before changing them, treats `SameSiteDefaultMode` as unset, and returns an error if `SameSite=None` without `Secure`. The migration notes call out `form_post`/SAML. | two-way |
+| D18 | `cookiestore.New` copies the options before changing them and treats `SameSiteDefaultMode` as unset. *Changed during the build:* `SameSite=None` forces `Secure` at construction (even with `WithInsecureCookies`), instead of a `Save` error, so `New` keeps returning `*sessions.CookieStore` for callers that type-assert it. Per-session `Options` overrides are not policed (documented). The migration notes call out `form_post`/SAML. | two-way |
 | D19 | `fuzz.yml` uploads no artifacts; a failure only fails the job, and the maintainer reproduces it locally. It sets `permissions: contents: read`, pins actions by SHA, and pins the `govulncheck` version. | two-way |
 | D20 | v1.0.2 is cut from `v1.0.1` with only the #1 and #2 fixes, released the same day as v1.1.0. Go vuln DB reports for `middleware.MutateMethod` and `keys.(*Filesystem).Decrypt` are drafted by Claude and submitted by the owner. | one-way |
 | D21 | `cookiestore` always sets `Secure`. A new variadic `cookiestore.New(fn, opts, ...Option)` adds `WithInsecureCookies()` for local HTTP dev. | one-way |
 | D22 | The CSRF body cap defaults to 1 MB and applies only to non-safe methods. Upload routes use a subrouter with their own `HandleCSRF`. | one-way |
 | D23 | Azure `Encrypt` errors when `len(aad) > 0`. Azure `Decrypt` logs a warning once and still decrypts, so existing data stays readable. (API 7.0 with RSA-OAEP-256 never supported AAD.) | one-way |
+| D24 | *Added during the build.* Split session cookies are bound to the main session by a private random ID; they are joined only when the ID matches and the session isn't new, and they are expired on logout (`MaxAge < 0`). Unbound v1.0.x split cookies are dropped once. | one-way |
+| D25 | *Added during the build.* The stack order is 1a→1b→1c→2a→2b→2c→2d→3a→4a→4d→3b→4b→4c→5a→5b (4a/4d moved ahead of 3b). Each branch is one PR. | two-way |
 
 ## Findings in scope
 
@@ -68,6 +70,9 @@ exploitable issues.
 | 24 | Low | The example OIDC callback clears flow state in a `defer`, after the session is already saved. | Clear before writing the response. Document that session writes after the first byte are lost. |
 | 25 | Low | The example admin check trusts an unverified email. | Require `email_verified`. |
 | 26 | Low | HEAD/OPTIONS skip CSRF on routes without `.Methods()`. | Docs and the upgrade skill. |
+| 27 | High | *Found during the build; exists in v1.0.1.* A captured split cookie (`_gbs-<key>`) replayed alone, with no main cookie, is joined into a fresh session, so values stored there (e.g. ID tokens) survive logout and max age. | D24. Backport scope is pending an owner decision. |
+| 28 | Low | *Found by fuzzing.* `toStringSlice` panicked on nil, so `{{joinStrings .missing ", "}}` returned a 500. | A nil value is rejected like any other non-slice. |
+| 29 | Low | *Found by fuzzing.* `RealHostFromRequest` dropped IPv6 brackets. | `net.JoinHostPort`. |
 
 ## Design
 
@@ -98,7 +103,7 @@ go via `f.Add` plus regression inputs in `testdata/fuzz/Fuzz<Thing>/`.
 `make fuzz` enumerates targets with `go test -list '^Fuzz'` per package and
 runs `go test -run '^$' -fuzz '^<T>$' -fuzztime $(FUZZTIME)` for each.
 `.github/workflows/fuzz.yml` runs nightly and on `workflow_dispatch` with
-`FUZZTIME=60s`, uploading `**/testdata/fuzz/**` as an artifact on failure.
+`FUZZTIME=60s`. A failure only fails the job; no artifacts are uploaded (D19).
 Properties are invariants, not just "no panic":
 
 | Package | Targets (property) |
