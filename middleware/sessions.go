@@ -67,7 +67,9 @@ func RequireNamedSession(store sessions.Store, name string, splitValues []any, h
 // router must not split the same key.
 //
 // The binding ID is stored in the session values under the string key
-// "_gbs_binding", which is reserved; handlers must not set or remove it.
+// "_gbs_binding", which is reserved; handlers must not set or remove it, and
+// must not copy it into a new session at a login reset (assign a fresh Values
+// map instead).
 //
 // Split cookies written by go-bananas v1.0.x carry no binding and are dropped
 // once after upgrading. A downgrade to v1.0.x keeps split values: v1.0.x joins

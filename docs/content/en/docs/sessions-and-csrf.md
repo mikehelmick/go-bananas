@@ -80,7 +80,8 @@ such key is stored in a companion `_gbs-<key>` cookie that is **bound to the mai
 session** by a random ID: it is joined only alongside the session that issued it,
 and resetting or deleting the main session unbinds or expires it. The ID is kept
 in the session values under the string key `"_gbs_binding"`, which is reserved:
-don't use that key for your own values. One session
+don't use that key for your own values, and don't copy it into a new session
+when you reset at login (assign a fresh `Values` map). One session
 can split several keys. The companion cookie name doesn't include the session
 name, so two named sessions (`RequireNamedSession`) on the same router must not
 split the same key.

@@ -85,9 +85,10 @@ the same secret, and a hung backend is bounded.
 
 The trade-offs:
 
-- A waiting caller's own context is not honored. A caller whose context is
-  cancelled while a fetch is in flight still waits for that fetch to finish, for
-  up to 30 seconds.
+- No caller's own context or deadline is honored while a fetch is in flight,
+  including the first caller, which runs the fetch. Every caller waits for that
+  fetch to finish, for up to 30 seconds, so a request handler can overrun its
+  own deadline by up to 30 seconds.
 - The first caller's context values are used for a result shared with every
   waiter, so a provider **must not authorize per caller through context values**
   (for example, a caller identity carried on the context).

@@ -40,7 +40,7 @@ exploitable issues.
 | D24 | *Added during the build.* Split session cookies are bound to the main session by a private random ID; they are joined only when the ID matches and the session isn't new, and they are expired on logout (`MaxAge < 0`). Unbound v1.0.x split cookies are dropped once. The ID is stored under a plain, reserved string key (`"_gbs_binding"`), which gob encodes without registration, so v1.0.x can still decode v1.1 sessions (rollback stays safe) and no new exported API is needed. | one-way |
 | D25 | *Added during the build.* The stack order is 1a→1b→1c→2a→2b→2c→2d→3a→4a→4d→3b→4b→4c→5a→5b (4a/4d moved ahead of 3b). Each branch is one PR. | two-way |
 | D26 | *Added during the build.* New exported identifiers beyond the plan: `cache.MaxExpireAfter` (100 years, the TTL bound for #12) and `cache.ErrLookupPanicked` (what coalesced waiters get when the owner's lookup panics). | one-way |
-| D27 | *Added during the build.* `secrets.Cacher` runs its shared fetch on a context detached from the caller's cancellation and deadline, with a fixed 30 s timeout, so one cancelled or nearly expired request can't fail coalesced callers. Waiters can't cancel while a fetch is in flight (bounded by 30 s). Providers must not authorize per caller through context values, because the first caller's context is used for the shared result. | one-way |
+| D27 | *Added during the build.* `secrets.Cacher` runs its shared fetch on a context detached from the caller's cancellation and deadline, with a fixed 30 s timeout, so one cancelled or nearly expired request can't fail coalesced callers. No caller, including the first, can cancel while a fetch is in flight (bounded by 30 s). Providers must not authorize per caller through context values, because the first caller's context is used for the shared result. | one-way |
 
 ## Findings in scope
 
@@ -245,5 +245,6 @@ This section records the design-security-reviewer findings (2026-11-14) and how 
 
 ## Open questions (agreed to stay open)
 
+- **#27 backport scope (owner decision, blocks push):** whether `release/v1.0.2` also carries the D24 split-cookie binding and a third GHSA/vuln DB report, or #27 is published as "fixed in 1.1.0 only". D12, D20, Phase 6 and the advisory ranges get aligned once decided.
 - Real AAD on Azure via Managed HSM A256GCM: this needs the `azkeys` SDK and a new ciphertext format, so it's a separate feature (agreed with D23).
 - Migrating the Azure providers off the deprecated `azure-sdk-for-go v68` (`services/keyvault/v7.0`) and `go-autorest` to the `azsecrets`/`azkeys` SDKs: this is dependency work, not a security fix in this release (agreed 2026-11-14).

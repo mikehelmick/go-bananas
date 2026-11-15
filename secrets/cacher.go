@@ -53,8 +53,9 @@ const cacherFetchTimeout = 30 * time.Second
 // caller's deadline is not used, so a first caller with little time left does
 // not fail every waiter.
 //
-// Waiters cannot cancel while a fetch is in flight: a caller's own ctx is not
-// honored, and it waits for the shared fetch to finish, for at most 30s.
+// No caller can cancel while a fetch is in flight, including the first one,
+// which runs the fetch itself: a caller's own ctx and deadline are not honored,
+// and every caller waits for the shared fetch to finish, for at most 30s.
 //
 // Because the first caller's context values are used for a result shared with
 // every waiter, the wrapped provider must not authorize per caller through

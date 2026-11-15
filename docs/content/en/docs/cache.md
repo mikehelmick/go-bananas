@@ -62,7 +62,8 @@ How it behaves under concurrency:
 
 It backs the secret-manager cacher, which uses the same detached-context
 pattern. Its shared fetch always has a fixed 30-second timeout and ignores
-every caller's deadline. A waiting caller's context is not honored, and providers must
+every caller's deadline. No caller's context is honored while the fetch runs
+(including the first caller's), and providers must
 not authorize per caller through context values (see
 [Secrets & keys](secrets-and-keys#caching-and-cancellation)).
 
