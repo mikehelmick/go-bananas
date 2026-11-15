@@ -27,7 +27,7 @@ import (
 
 // testRenderer builds a renderer with the error templates the response helpers
 // reference.
-func testRenderer(t *testing.T) *render.Renderer {
+func testRenderer(t testing.TB) *render.Renderer {
 	t.Helper()
 	fsys := fs.FS(fstest.MapFS{
 		"400.html": &fstest.MapFile{Data: []byte(`{{define "400"}}bad request{{end}}`)},
