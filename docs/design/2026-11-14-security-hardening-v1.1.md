@@ -1,6 +1,6 @@
 # Security hardening and fuzz suite (v1.1.0)
 
-Status: draft · Author: Mike Helmick · 2026-11-14
+Status: approved · Author: Mike Helmick · 2026-11-14
 
 ## Goal
 
@@ -225,3 +225,4 @@ This section records the design-security-reviewer findings (2026-11-14) and how 
 ## Open questions (agreed to stay open)
 
 - Real AAD on Azure via Managed HSM A256GCM: this needs the `azkeys` SDK and a new ciphertext format, so it's a separate feature (agreed with D23).
+- Migrating the Azure providers off the deprecated `azure-sdk-for-go v68` (`services/keyvault/v7.0`) and `go-autorest` to the `azsecrets`/`azkeys` SDKs: this is dependency work, not a security fix in this release (agreed 2026-11-14).
