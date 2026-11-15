@@ -15,6 +15,8 @@
 package middleware
 
 import (
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
+	"github.com/mikehelmick/go-bananas/internal/util"
 	"github.com/mikehelmick/go-bananas/logging"
 	"github.com/mikehelmick/go-bananas/render"
 	"github.com/mikehelmick/go-bananas/response"
@@ -35,6 +38,12 @@ const (
 	// defaultSessionName is the cookie name used by [RequireSession].
 	defaultSessionName = "go-bananas-session"
 	splitValuePrefix   = "_gbs-"
+
+	// splitBindingValueKey is the session-value key for the random ID that
+	// binds split cookies to their main session. It is a plain string, which
+	// gob encodes without registration, so go-bananas v1.0.1 can still decode
+	// sessions that carry it.
+	splitBindingValueKey = "_gbs_binding"
 )
 
 // RequireNamedSession is like [RequireSession] but uses a specific session
@@ -49,7 +58,18 @@ func RequireNamedSession(store sessions.Store, name string, splitValues []any, h
 //
 // splitValues names session keys whose values are large enough to warrant their
 // own cookie (browsers cap individual cookies at ~4KB); each listed key is split
-// out into a separate companion cookie on save and rejoined on load.
+// out into a separate companion cookie on save and rejoined on load. Each
+// companion cookie is bound to the main session by a random ID and is joined
+// only alongside that session; resetting the session's Values map unbinds it,
+// and deleting the session (Options.MaxAge < 0) expires it.
+//
+// The binding ID is stored in the session values under the string key
+// "_gbs_binding", which is reserved; handlers must not set or remove it, and
+// must not copy it into a new session at a login reset (assign a fresh Values
+// map instead).
+//
+// Split cookies written by go-bananas v1.0.1 and earlier carry no binding, so
+// their values are dropped once after upgrading and must be set again.
 func RequireSession(store sessions.Store, splitValues []any, h *render.Renderer) mux.MiddlewareFunc {
 	return buildHandler(store, defaultSessionName, splitValues, h)
 }
@@ -60,7 +80,10 @@ func splitCookieName(key any) string {
 
 // joinSplitSessionCookie retrieves a companion cookie holding a single value that
 // was previously split out of the main session cookie, folding its value back
-// into session.
+// into session. The value is joined only when the companion cookie carries the
+// main session's binding ID and the main session is not new, so a split cookie
+// replayed alone, or after its session was reset, is dropped. An unjoined split
+// cookie is expired on save.
 func joinSplitSessionCookie(r *http.Request, store sessions.Store, key any, session *sessions.Session, logger *slog.Logger) *sessions.Session {
 	name := splitCookieName(key)
 	splitSession, err := store.Get(r, name)
@@ -68,22 +91,73 @@ func joinSplitSessionCookie(r *http.Request, store sessions.Store, key any, sess
 		logger.Warn("failed to get split session cookie; creating a new one", "name", name, "error", err)
 		splitSession, _ = store.New(r, name)
 	}
-	if splitSession.Values != nil {
-		if v, ok := splitSession.Values[key]; ok {
-			session.Values[key] = v
-		}
+	v, ok := splitSession.Values[key]
+	if !ok {
+		return splitSession
 	}
+	id, splitID := splitBindingID(session), splitBindingID(splitSession)
+	if session.IsNew || id == "" || subtle.ConstantTimeCompare([]byte(id), []byte(splitID)) != 1 {
+		logger.Debug("dropping split session cookie not bound to this session", "name", name)
+		return splitSession
+	}
+	session.Values[key] = v
 	return splitSession
 }
 
 // splitSessionCookie moves the value for key out of the main session and into
-// splitSession so it can be saved as its own cookie.
-func splitSessionCookie(session, splitSession *sessions.Session, key any) {
+// splitSession, bound to the main session's ID, so it can be saved as its own
+// cookie. It reports whether splitSession needs saving.
+//
+// If the main session has no value for key, or is being deleted
+// (Options.MaxAge < 0), the split cookie is expired instead, but only when
+// the request carried it; otherwise there is nothing to save.
+func splitSessionCookie(r *http.Request, session, splitSession *sessions.Session, key any, id string) bool {
+	value, ok := session.Values[key]
+	delete(session.Values, key)
 	splitSession.Values = make(map[any]any)
-	if value, ok := session.Values[key]; ok {
+
+	deleting := session.Options != nil && session.Options.MaxAge < 0
+	if ok && !deleting {
 		splitSession.Values[key] = value
-		delete(session.Values, key)
+		splitSession.Values[splitBindingValueKey] = id
+		return true
 	}
+
+	if _, err := r.Cookie(splitCookieName(key)); err != nil {
+		return false
+	}
+	var opts sessions.Options
+	if splitSession.Options != nil {
+		opts = *splitSession.Options
+	}
+	opts.MaxAge = -1
+	splitSession.Options = &opts
+	return true
+}
+
+// splitBindingID returns the binding ID stored on session, or "".
+func splitBindingID(session *sessions.Session) string {
+	id, _ := session.Values[splitBindingValueKey].(string)
+	return id
+}
+
+// ensureSplitBindingID returns the session's binding ID, generating and
+// storing a new one if it has none (a new session, or a Values map the
+// handler reset or replaced).
+func ensureSplitBindingID(session *sessions.Session) (string, error) {
+	if id := splitBindingID(session); id != "" {
+		return id, nil
+	}
+	b, err := util.RandomBytes(32)
+	if err != nil {
+		return "", fmt.Errorf("generate split binding ID: %w", err)
+	}
+	id := base64.RawURLEncoding.EncodeToString(b)
+	if session.Values == nil {
+		session.Values = make(map[any]any)
+	}
+	session.Values[splitBindingValueKey] = id
+	return id, nil
 }
 
 func buildHandler(store sessions.Store, name string, splitValues []any, h *render.Renderer) mux.MiddlewareFunc {
@@ -131,11 +205,22 @@ func buildHandler(store sessions.Store, name string, splitValues []any, h *rende
 					if session == nil {
 						return
 					}
-					// Split and save individual cookies.
-					for key, splitSession := range splitSessions {
-						splitSessionCookie(session, splitSession, key)
-						if err := splitSession.Save(r, w); err != nil {
-							saveErr = errors.Join(saveErr, fmt.Errorf("save split session %s%v: %w", splitValuePrefix, key, err))
+					// Split and save individual cookies, bound to the session's
+					// binding ID. A handler that reset or replaced the Values map
+					// gets a new ID, which unbinds every earlier split cookie.
+					if len(splitSessions) > 0 {
+						id, err := ensureSplitBindingID(session)
+						if err != nil {
+							saveErr = err
+							return
+						}
+						for key, splitSession := range splitSessions {
+							if !splitSessionCookie(r, session, splitSession, key, id) {
+								continue
+							}
+							if err := splitSession.Save(r, w); err != nil {
+								saveErr = errors.Join(saveErr, fmt.Errorf("save split session %s%v: %w", splitValuePrefix, key, err))
+							}
 						}
 					}
 					sess.StoreLastActivity(session, time.Now())
