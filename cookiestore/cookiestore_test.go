@@ -63,6 +63,8 @@ func TestNewCookieDefaults(t *testing.T) {
 		{name: "insecure", o: []Option{WithInsecureCookies()}, secure: false, sameSite: http.SameSiteLaxMode},
 		{name: "insecure_overrides_secure", opts: &sessions.Options{Secure: true}, o: []Option{WithInsecureCookies()}, secure: false, sameSite: http.SameSiteLaxMode},
 		{name: "insecure_none_forces_secure", opts: &sessions.Options{SameSite: http.SameSiteNoneMode}, o: []Option{WithInsecureCookies()}, secure: true, sameSite: http.SameSiteNoneMode},
+		{name: "nil_option_skipped", o: []Option{nil}, secure: true, sameSite: http.SameSiteLaxMode},
+		{name: "nil_option_with_insecure", o: []Option{nil, WithInsecureCookies(), nil}, secure: false, sameSite: http.SameSiteLaxMode},
 	}
 
 	for _, tc := range cases {

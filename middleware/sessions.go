@@ -16,7 +16,6 @@ package middleware
 
 import (
 	"crypto/subtle"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -87,7 +86,7 @@ func joinSplitSessionCookie(r *http.Request, store sessions.Store, key any, sess
 	if !ok {
 		return splitSession
 	}
-	id, splitID := splitBindingID(session), splitBindingID(splitSession)
+	id, splitID := sess.SplitBinding(session), sess.SplitBinding(splitSession)
 	if session.IsNew || id == "" || subtle.ConstantTimeCompare([]byte(id), []byte(splitID)) != 1 {
 		logger.Debug("dropping split session cookie not bound to this session", "name", name)
 		return splitSession
@@ -111,7 +110,7 @@ func splitSessionCookie(r *http.Request, session, splitSession *sessions.Session
 	deleting := session.Options != nil && session.Options.MaxAge < 0
 	if ok && !deleting {
 		splitSession.Values[key] = value
-		storeSplitBindingID(splitSession, id)
+		sess.StoreSplitBinding(splitSession, id)
 		return true
 	}
 
@@ -124,43 +123,18 @@ func splitSessionCookie(r *http.Request, session, splitSession *sessions.Session
 	return true
 }
 
-// splitBindingKey is the session-value key type for the ID that binds split
-// cookies to their main session. It is private to this package.
-type splitBindingKey string
-
-const splitBindingIDKey = splitBindingKey("splitBindingID")
-
-func init() {
-	// Session values are gob-encoded by cookie stores; register the key type.
-	gob.Register(splitBindingKey(""))
-}
-
-// splitBindingID returns the binding ID stored on session, or "".
-func splitBindingID(session *sessions.Session) string {
-	id, _ := session.Values[splitBindingIDKey].(string)
-	return id
-}
-
-// storeSplitBindingID stores id as session's binding ID.
-func storeSplitBindingID(session *sessions.Session, id string) {
-	if session.Values == nil {
-		session.Values = make(map[any]any)
-	}
-	session.Values[splitBindingIDKey] = id
-}
-
 // ensureSessionID returns the session's random binding ID, generating and
 // storing one if it has none (a new session, or a value map the handler
 // replaced).
 func ensureSessionID(session *sessions.Session) (string, error) {
-	if id := splitBindingID(session); id != "" {
+	if id := sess.SplitBinding(session); id != "" {
 		return id, nil
 	}
 	id, err := util.RandomToken(32)
 	if err != nil {
 		return "", fmt.Errorf("generate session ID: %w", err)
 	}
-	storeSplitBindingID(session, id)
+	sess.StoreSplitBinding(session, id)
 	return id, nil
 }
 

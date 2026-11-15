@@ -138,6 +138,45 @@ func TestNonceAndRegion(t *testing.T) {
 	}
 }
 
+func TestSplitBinding(t *testing.T) {
+	t.Parallel()
+
+	s := sessions.NewSession(nil, "test")
+	if got := SplitBinding(s); got != "" {
+		t.Fatalf("expected empty split binding, got %q", got)
+	}
+	StoreSplitBinding(s, "id-1")
+	if got := SplitBinding(s); got != "id-1" {
+		t.Fatalf("SplitBinding = %q, want id-1", got)
+	}
+	if _, ok := s.Values[sessionKeySplitBinding]; !ok {
+		t.Fatal("split binding not stored under the registered sessionKey type")
+	}
+	ClearSplitBinding(s)
+	if got := SplitBinding(s); got != "" {
+		t.Fatalf("expected empty split binding after clear, got %q", got)
+	}
+
+	s.Values[sessionKeySplitBinding] = 42
+	if got := SplitBinding(s); got != "" {
+		t.Fatalf("SplitBinding with malformed value = %q, want empty", got)
+	}
+
+	// A nil value map is initialized on store.
+	s.Values = nil
+	StoreSplitBinding(s, "id-2")
+	if got := SplitBinding(s); got != "id-2" {
+		t.Fatalf("SplitBinding after nil map = %q, want id-2", got)
+	}
+
+	// A nil session is tolerated.
+	StoreSplitBinding(nil, "x")
+	ClearSplitBinding(nil)
+	if got := SplitBinding(nil); got != "" {
+		t.Fatalf("SplitBinding(nil) = %q, want empty", got)
+	}
+}
+
 func TestFlash(t *testing.T) {
 	t.Parallel()
 

@@ -40,7 +40,7 @@ import (
 // HttpOnly is always set. Secure is always set unless [WithInsecureCookies] is
 // passed, in which case it is cleared. The one exception: SameSite=None always
 // forces Secure, even with [WithInsecureCookies], because browsers drop
-// SameSite=None cookies that are not Secure.
+// SameSite=None cookies that are not Secure. Nil options are skipped.
 //
 // These defaults are applied once, here. They are not enforced later: a
 // handler that edits a session's Options (session.Options), or code that edits
@@ -49,7 +49,9 @@ import (
 func New(fn EntropyFunc, opts *sessions.Options, o ...Option) sessions.Store {
 	var cfg config
 	for _, opt := range o {
-		opt(&cfg)
+		if opt != nil {
+			opt(&cfg)
+		}
 	}
 
 	var options sessions.Options
