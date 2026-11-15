@@ -361,8 +361,9 @@ below gives **Grep**, **Affected if** and **Fix**. Entries marked
 - Affected if you rely on a cancelled request aborting a slow secret fetch. The
   shared fetch keeps the first caller's context values but ignores its
   cancellation and deadline: it always runs with a fixed 30s timeout, whatever
-  any caller's deadline is. A waiting caller's own ctx isn't honored:
-  it can't cancel and waits for the shared fetch, for up to 30s. Also affected
+  any caller's deadline is. No caller's own ctx is honored, including the
+  first caller, which runs the fetch: none can cancel, and each waits for the
+  shared fetch, for up to 30s, so a handler can overrun its own deadline. Also affected
   if the wrapped provider authorizes per caller through ctx values (for example
   a caller identity on the context): the first caller's values are used for a
   result shared with every waiter.
