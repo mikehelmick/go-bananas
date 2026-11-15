@@ -28,7 +28,8 @@ and [`exposure-notifications-server`](https://github.com/google/exposure-notific
 
 ## Install
 
-go-bananas requires **Go 1.27** or newer.
+go-bananas requires **Go 1.27** or newer; build with Go 1.27.4 or later for
+the [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) `net/http` fix.
 
 ```sh
 go get github.com/mikehelmick/go-bananas@latest
@@ -68,7 +69,7 @@ func main() {
 		m := webctx.TemplateMapFromContext(req.Context())
 		m.Title("Home")
 		h.RenderHTML(w, "home", m)
-	})
+	}).Methods(http.MethodGet)
 
 	// Serve the embedded static assets the renderer's SRI tags point at.
 	static := middleware.ConfigureStaticAssets(true)

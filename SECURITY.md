@@ -18,12 +18,20 @@ reasonable window for a fix before public disclosure.
 
 ## Supported versions
 
-go-bananas is pre-1.0; only the **latest release** receives security fixes.
+Only the **latest `v1.x` release** receives security fixes.
 
 | Version | Supported |
 |---|---|
-| latest `v0.x` release | ✅ |
+| latest `v1.x` release | ✅ |
 | older releases | ❌ — please upgrade |
+
+## Go toolchain
+
+Build applications with **Go 1.27.4 or newer**. Earlier 1.27 releases are
+affected by [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) in `net/http`,
+which is reachable through go-bananas's HTTP server. The module's `go`
+directive stays at `1.27`, so the toolchain version is up to you; run
+`govulncheck ./...` to confirm your build is clean.
 
 ## Scope notes
 

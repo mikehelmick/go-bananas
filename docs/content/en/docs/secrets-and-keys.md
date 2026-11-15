@@ -74,6 +74,54 @@ Wrap any manager with `WrapCacher` (TTL caching, backed by the
 [`cache`](cache) package) or `WrapJSONExpander` (extract a field from a
 JSON-valued secret).
 
+### Caching and cancellation
+
+`WrapCacher` coalesces concurrent lookups of the same secret into one fetch. That
+shared fetch is **detached from the first caller's cancellation**: it keeps the
+caller's context values but runs under its own deadline of 30 seconds (or the
+first caller's deadline, if that is later). Cancelling one request therefore
+doesn't fail the others waiting on the same secret, and a hung backend is
+bounded. The trade-off: a caller whose own context is cancelled while a fetch is
+in flight still waits for that fetch to finish.
+
+## Provider notes
+
+### HashiCorp Vault
+
+- **Secrets read the latest version by default.** A reference is the KV v2 path
+  with an optional `?version=N`; without a version, Vault returns the latest.
+  (Before v1.1 the default was version 1.) Pin `?version=1` to keep the old
+  behavior. References with a URL scheme, host, or fragment are rejected.
+- **Signatures are pinned to the signer's key version.** `Sign` sends
+  `key_version`, so a signer for `k/2` keeps signing with version 2 after the key
+  is rotated.
+- **Key IDs** are `name/N`, as returned by `KeyID()` and `CreateKeyVersion`;
+  the older `name@N` form is still accepted. The version must be numeric.
+  `SigningKeyVersions` lists versions newest first.
+
+### Azure Key Vault
+
+- **No additional authenticated data.** Azure Key Vault's RSA-OAEP-256 wrap has
+  no AAD. `Encrypt` with non-empty `aad` **returns an error** rather than
+  silently dropping it. `Decrypt` ignores `aad` so data encrypted by earlier
+  versions stays readable, and logs a warning once per `KeyVault`.
+- **Key IDs** are `VAULT/KEY/VERSION`. That is the form `KeyID()` returns and
+  `NewSigner` accepts. `SigningKeyVersions` lists enabled versions only, newest
+  first by creation time.
+- **Vault names** must match `^[A-Za-z0-9-]{3,24}$`; anything else is rejected
+  before a request is sent.
+
+### AWS Secrets Manager
+
+A secret name may carry `@VERSION` and `#STAGE` suffixes
+(`SECRET@VERSION#STAGE`), so `@` and `#` cannot appear in secret names.
+
+### Filesystem keys
+
+Key version files are named with decimal digits (as `CreateKeyVersion` writes
+them). Files with other names are ignored, and ciphertext whose version prefix
+isn't numeric is rejected with `invalid ciphertext: bad version`.
+
 ## Composing with sessions
 
 A neat demonstration of the layers composing: feed

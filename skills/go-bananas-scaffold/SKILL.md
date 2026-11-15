@@ -42,9 +42,10 @@ type appConfig struct {
 	Logging logging.Config // LOG_LEVEL, LOG_MODE
 	Secrets secrets.Config // SECRETS_DIR, ...
 
-	DevMode bool   `env:"DEV_MODE, default=false"`
-	Port    string `env:"PORT, default=8080"`
-	BuildID string `env:"BUILD_ID, default=dev"`
+	DevMode        bool   `env:"DEV_MODE, default=false"`
+	Port           string `env:"PORT, default=8080"`
+	BuildID        string `env:"BUILD_ID, default=dev"`
+	ServerEndpoint string `env:"SERVER_ENDPOINT"` // e.g. https://app.example.com; set in production
 }
 
 func main() {
@@ -63,9 +64,13 @@ func main() {
 	if err != nil { /* handle */ }
 	devMode := cfg.DevMode
 
-	store := cookiestore.New(entropyFunc, &sessions.Options{
-		Path: "/", MaxAge: 3600, HttpOnly: true, Secure: !devMode, SameSite: http.SameSiteLaxMode,
-	})
+	// cookiestore.New always sets HttpOnly and Secure and defaults SameSite to
+	// Lax. Only dev mode over plain HTTP opts out of Secure.
+	var storeOpts []cookiestore.Option
+	if devMode {
+		storeOpts = append(storeOpts, cookiestore.WithInsecureCookies())
+	}
+	store := cookiestore.New(entropyFunc, &sessions.Options{Path: "/", MaxAge: 3600}, storeOpts...)
 
 	r := mux.NewRouter()
 	r.Use(middleware.Recovery(h))
@@ -79,8 +84,15 @@ func main() {
 		"default-src 'self'; script-src 'self' 'nonce-{{nonce}}'; object-src 'none'"))
 	r.Use(middleware.GzipResponse())
 	r.Use(middleware.RequireSession(store, nil, h))
+	r.Use(middleware.CheckSessionMaxAge(12*time.Hour, func(w http.ResponseWriter, req *http.Request) {
+		response.SeeOther(w, req, "/") // redirect, don't render
+	}))
 	r.Use(middleware.HandleCSRF(h))
-	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{ServerName: "my-app", DevMode: devMode}))
+	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{
+		ServerName:     "my-app",
+		ServerEndpoint: cfg.ServerEndpoint, // otherwise serverEndpoint is "" outside dev mode
+		DevMode:        devMode,
+	}))
 	r.Use(middleware.InjectCurrentPath())
 
 	// REQUIRED: serve the embedded static assets the SRI tags point at,
@@ -190,6 +202,14 @@ In `home.html`, surface the framework-provided template values:
 
 ## Notes
 
+- **Security defaults (v1.1+):** every route sets `.Methods(...)` (safe methods
+  skip CSRF), and state-changing routes, including logout, are POST behind
+  `HandleCSRF`. `HandleCSRF` caps form-token request bodies at 1 MiB (413 above
+  that), so give upload routes their own subrouter with
+  `HandleCSRF(h, middleware.WithCSRFMaxBodyBytes(n))`. Behind a proxy that
+  rewrites `Host`, pass `middleware.WithSSLHost("app.example.com")` to
+  `SecureHeaders` (see the `go-bananas-middleware` skill). Build with Go 1.27.4
+  or later.
 - Keep cloud, OIDC, and other heavy deps out of the core binary by putting them
   in a **separate module** (as the `examples/ssr-oidc` app does).
 - Configure via env: compose the per-package `Config` structs into one app

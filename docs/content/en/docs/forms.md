@@ -175,11 +175,20 @@ rawQuantity := r.PostFormValue("quantity") // the literal "abc" the user typed
 | `WithMessages(m map[string]string)` | Override the message used for one or more validation tags (e.g. `"required"`, `"email"`, `"min"`), keyed by tag name. |
 
 > **Body limit and middleware ordering.** `net/http`'s `ParseForm` is
-> idempotent. If an earlier middleware already read the form — a CSRF middleware
-> that reads the posted token does this — `Bind`'s `WithMaxBodyBytes` cap is not
-> consulted, because the body was already parsed under the standard library's
-> own limit. To bound body size regardless of ordering, wrap the request early
-> in the chain with [`http.MaxBytesHandler`](https://pkg.go.dev/net/http#MaxBytesHandler).
+> idempotent. If an earlier middleware already read the form, `Bind`'s
+> `WithMaxBodyBytes` cap is not consulted. Two framework middlewares do this:
+>
+> - **`HandleCSRF`** reads the form to find the token on any POST (or other
+>   non-safe request) without an `X-CSRF-Token` header. It first limits the body
+>   to 1 MiB (`middleware.DefaultCSRFMaxBodyBytes`) and answers **413** when the
+>   form is larger, so in a standard chain a form POST is bounded at 1 MiB, not
+>   `Bind`'s 10 MiB default. Raise it per route with
+>   `middleware.WithCSRFMaxBodyBytes`; see
+>   [Sessions & CSRF](sessions-and-csrf#request-body-limit).
+> - **`MutateMethod`**, on an override, parses the (at most 64 KB) body itself.
+>
+> To bound body size regardless of ordering, wrap the request early in the chain
+> with [`http.MaxBytesHandler`](https://pkg.go.dev/net/http#MaxBytesHandler).
 
 ```go
 errs, err := form.Bind(r, &in,
@@ -200,6 +209,9 @@ Two adjacent concerns are intentionally left to you:
 - **File uploads.** `Bind` decodes form *values*, not uploaded files. For
   `multipart/form-data` file parts, reach for the standard library directly
   after (or instead of) `Bind` — `r.FormFile("avatar")` or `r.MultipartForm.File`.
+  Uploads sent as a form with the CSRF token in a form field are subject to
+  `HandleCSRF`'s 1 MiB body limit; mount upload routes with a higher
+  `WithCSRFMaxBodyBytes`.
 - **Translated messages.** The built-in validation messages are English; override
   them per tag with `WithMessages`, or set them from your
   [i18n]({{< relref "i18n" >}}) translator in the handler before re-rendering.
