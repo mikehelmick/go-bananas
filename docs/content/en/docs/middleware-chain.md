@@ -49,7 +49,7 @@ the renderer's SRI tags point at — serve them with cache headers via
 
 ```go
 static := middleware.ConfigureStaticAssets(devMode)
-r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets))).Methods(http.MethodGet, http.MethodHead)
 ```
 
 ## Why the order matters
@@ -81,8 +81,8 @@ r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
 
 A mux route without `.Methods(...)` matches every method. `HandleCSRF` lets
 GET, HEAD and OPTIONS through without a token, so a state-changing handler on a
-route without `.Methods` can be reached by a cross-site `HEAD` or `OPTIONS`
-request that carries no token. Give every route an explicit method list, and
+route without `.Methods` can be reached by a HEAD or OPTIONS request that
+carries no token. Give every route an explicit method list, and
 use `POST` (or `PUT`/`PATCH`/`DELETE`) for anything that changes state —
 including logout.
 
@@ -106,7 +106,7 @@ Defaults:
 | Option | Effect |
 |---|---|
 | `WithSSLHost(host)` | Redirect HTTP to HTTPS on this fixed host instead of the request's host. The simplest safe choice behind a proxy. |
-| `WithAllowedHosts(hosts...)` | Reject a request whose host is not listed (case-insensitive, port must match exactly) with **400 Bad Request**. Skipped in dev mode. |
+| `WithAllowedHosts(hosts...)` | Reject a request whose host is not listed (case-insensitive, port must match exactly) with **400 Bad Request**. Skipped in dev mode. This includes load-balancer and Kubernetes probes that send an IP as the host: allowlist the probe host, or mount `/healthz` outside `SecureHeaders`. |
 | `WithTrustedHostHeaders(headers...)` | Take the host from the first non-empty header (for example `"X-Forwarded-Host"`). **Must be combined with `WithAllowedHosts` or `WithSSLHost`**; otherwise a forged header controls the redirect target, and a warning is logged at startup. |
 | `WithHSTSPreload()` | Add `preload` to `Strict-Transport-Security`. Only use it once the domain and every subdomain are HTTPS-only and you intend to submit it to the preload list. Sites already on the list should add this option. |
 

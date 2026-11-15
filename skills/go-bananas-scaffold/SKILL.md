@@ -98,7 +98,7 @@ func main() {
 	// REQUIRED: serve the embedded static assets the SRI tags point at,
 	// or every page's CSS/JS will 404.
 	static := middleware.ConfigureStaticAssets(devMode)
-	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets))).Methods(http.MethodGet, http.MethodHead)
 
 	// Liveness/readiness probes.
 	r.Handle("/healthz", server.HealthzHandler()).Methods(http.MethodGet)

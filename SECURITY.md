@@ -18,11 +18,13 @@ reasonable window for a fix before public disclosure.
 
 ## Supported versions
 
-Only the **latest `v1.x` release** receives security fixes.
+The **latest `v1.x` minor release** receives security fixes. Critical fixes may
+be backported to the previous minor (for example, v1.0.2).
 
 | Version | Supported |
 |---|---|
-| latest `v1.x` release | ✅ |
+| latest `v1.x` minor | ✅ |
+| previous minor | critical fixes only |
 | older releases | ❌ — please upgrade |
 
 ## Go toolchain

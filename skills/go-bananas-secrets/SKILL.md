@@ -79,8 +79,11 @@ Lax; don't set those fields yourself. Pass `WithInsecureCookies()` only in dev
 mode. `SameSite=None` forces `Secure` even then.
 
 Returning multiple keys enables rotation: cookies encode with the first and
-decode against all. Rotating the first key out is also the only way to revoke
-cookie sessions, and it revokes all of them.
+decode against all. A key that is still returned keeps decoding its cookies, so
+rotation alone revokes nothing. To revoke all sessions, remove every old key from
+what the `EntropyFunc` returns; that is the only way to revoke cookie sessions.
+See `examples/ssr-oidc/main.go` for an end-to-end example that generates and
+persists the key on first run.
 
 ## Provider behavior to know (v1.1+)
 
@@ -92,7 +95,6 @@ cookie sessions, and it revokes all of them.
   service has no AAD); `Decrypt` ignores AAD and logs a warning once. Key IDs are
   `VAULT/KEY/VERSION`. Vault names must match `^[A-Za-z0-9-]{3,24}$`.
 - **`WrapCacher`** shares one fetch per secret, detached from the caller's
-  cancellation and bounded at 30 s. See `examples/ssr-oidc/main.go` for an end-to-end example
-that generates and persists the key on first run.
+  cancellation and bounded at 30 s.
 
 Full API: https://pkg.go.dev/github.com/mikehelmick/go-bananas/secrets

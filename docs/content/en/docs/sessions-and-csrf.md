@@ -129,9 +129,12 @@ r.Use(middleware.HandleCSRF(h))
 ### Revocation
 
 Cookie sessions **cannot be revoked one at a time**: the whole session lives in
-the cookie, so a copied cookie stays valid until it expires (by `MaxAge` or
-`CheckSessionMaxAge`). The only way to invalidate sessions early is to rotate the
-cookie keys returned by your `EntropyFunc`, which revokes **every** session. If
+the cookie, so a copied cookie stays valid until it goes unused for `MaxAge`
+(`RequireSession` re-saves the cookie on every request), or until
+`CheckSessionMaxAge` expires it. Rotating keys alone revokes nothing: cookies
+are decoded against every key your `EntropyFunc` returns, so keeping an old key
+for decoding keeps its sessions valid. To revoke **every** session, remove all
+old keys from what the `EntropyFunc` returns. If
 you need per-session revocation, keep a server-side session record and check it
 in your `Authenticator`.
 
@@ -216,6 +219,7 @@ r.Use(middleware.CheckSessionMaxAge(12*time.Hour, onExpired))
 // Upload routes: 64 MiB limit. Register this subrouter first.
 upload := r.PathPrefix("/upload").Subrouter()
 upload.Use(middleware.HandleCSRF(h, middleware.WithCSRFMaxBodyBytes(64<<20)))
+upload.Use(middleware.PopulateTemplateVariables(tmplConfig))
 upload.HandleFunc("", handleUpload).Methods(http.MethodPost)
 
 // Everything else: the 1 MiB default.

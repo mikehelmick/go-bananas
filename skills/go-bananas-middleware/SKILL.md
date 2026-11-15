@@ -45,7 +45,7 @@ And the static assets the renderer's SRI tags point at:
 
 ```go
 static := middleware.ConfigureStaticAssets(devMode)
-r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets))).Methods(http.MethodGet, http.MethodHead)
 ```
 
 Hard ordering rules:
@@ -73,8 +73,9 @@ Hard ordering rules:
   `DELETE`; query-string and multipart `_method` are ignored. Every route
   reachable through an override must be behind `HandleCSRF`.
 - **Every route sets `.Methods(...)`** — GET, HEAD and OPTIONS skip CSRF, so a
-  state-changing handler on a route with no method list is reachable by a
-  token-less cross-site `HEAD`/`OPTIONS`. TRACE needs a token.
+  state-changing handler on a route with no method list can be reached by a
+  HEAD or OPTIONS request that carries no token. Static assets use
+  `.Methods(http.MethodGet, http.MethodHead)`. TRACE needs a token.
 
 ## SecureHeaders options
 
