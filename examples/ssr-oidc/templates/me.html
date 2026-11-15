@@ -13,7 +13,7 @@
       <dt>Name</dt><dd>{{.principal.Name}}</dd>
       <dt>Email</dt><dd>{{.principal.Email}}</dd>
     </dl>
-    <p><a href="/">Home</a> · <a href="/logout">Sign out</a></p>
+    <nav><a href="/">Home</a> · {{template "logoutForm" .}}</nav>
   </main>
 </body>
 </html>{{end}}

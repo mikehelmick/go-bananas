@@ -9,7 +9,7 @@
   <main>
     <h1>Admin</h1>
     <p>{{.principal.Email}} is on the admin allow-list.</p>
-    <p><a href="/">Home</a> · <a href="/me">Profile</a> · <a href="/logout">Sign out</a></p>
+    <nav><a href="/">Home</a> · <a href="/me">Profile</a> · {{template "logoutForm" .}}</nav>
   </main>
 </body>
 </html>{{end}}

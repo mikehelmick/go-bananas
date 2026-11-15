@@ -45,7 +45,9 @@ Configuration is via environment variables (all optional):
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `OIDC_ISSUER` | _(unset)_ | OIDC discovery URL; when set, enables `/login` |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | | OIDC client config |
-| `ADMIN_EMAILS` | _(unset)_ | Comma-separated allow-list for `/admin`; unset means nobody is an admin, so `/admin` answers 403 |
+| `ADMIN_EMAILS` | _(unset)_ | Comma-separated allow-list for `/admin`; unset means nobody is an admin, so `/admin` answers 403. A match counts only when the provider sets `email_verified: true` |
+| `SERVER_ENDPOINT` | _(unset)_ | Canonical base URL, such as `https://app.example.com`, exposed to templates as `serverEndpoint`. Set it in production |
+| `ALLOWED_HOSTS` | _(unset)_ | Comma-separated bare hosts (`app.example.com`, optionally with a port) that `serverEndpoint` may be derived from when `SERVER_ENDPOINT` is unset. With neither set, `serverEndpoint` is empty outside dev mode, because the `Host` header is client-chosen |
 
 On first run a random 64-byte cookie key is generated and written under
 `SECRETS_DIR`, then read back through `secrets.NewFilesystem` on every request via
@@ -62,10 +64,10 @@ On first run a random 64-byte cookie key is generated and written under
 | GET | `/readyz` | Readiness probe with pluggable checks (`server.ReadyzHandler`) |
 | GET | `/api/health` | JSON health check (app-level demo) |
 | GET | `/login` | Start OIDC sign-in (or a notice if unconfigured) |
-| GET | `/auth/callback` | OIDC callback |
+| GET | `/auth/callback` | OIDC callback: constant-time state check, flow state cleared on every outcome |
 | GET | `/me` | Protected by `RequireAuthenticated` |
-| GET | `/admin` | Also authorized: 401 anonymous, 403 unless the user is in `ADMIN_EMAILS` |
-| GET | `/logout` | Clear the session user |
+| GET | `/admin` | Also authorized: 401 anonymous, 403 unless the user's verified email is in `ADMIN_EMAILS` |
+| POST | `/logout` | CSRF-protected; clears the session. `GET /logout` is 405, so another site cannot sign the user out |
 | POST | `/dev/login` | Dev-only: sign in as a fake user (CSRF-protected) |
 
 ## Sign in without an identity provider
@@ -75,6 +77,21 @@ exposes `POST /dev/login` (in dev mode), which stores a fake user on the session
 so you can exercise the protected `/me` route without standing up an identity
 provider. To try the real flow, point `OIDC_ISSUER` at any compliant provider and
 set the client variables.
+
+## Session writes must happen before the response
+
+`RequireSession` saves the session when the handler first writes the response
+(the first `WriteHeader` or body byte). Session changes made after that point,
+including in a `defer`, are silently lost. The OIDC callback therefore takes
+the state, nonce and PKCE verifier off the session and deletes them before it
+checks anything. After any callback, successful or not, the browser's session
+no longer holds the flow state, so a second callback is rejected with 400. A
+replay with an older copy of the cookie is stopped by the provider instead:
+authorization codes are single-use and bound to the PKCE verifier.
+
+A provider-reported failure (`?error=access_denied` and the like, RFC 6749
+§4.1.2.1) clears the flow state, flashes "Sign-in was not completed." and
+redirects home without calling the token endpoint.
 
 ## 401 vs 403
 
@@ -87,6 +104,10 @@ second middleware (`requireAdmin` in [`main.go`](./main.go)) that denies with
 DEV_MODE=true go run .                            # signed in, not an admin -> 403
 ADMIN_EMAILS=dev@example.com DEV_MODE=true go run .   # signed in as an admin -> 200
 ```
+
+Admin also requires the provider's `email_verified` claim to be `true`. The
+signed-in user records it at sign-in, so after upgrading, existing admins must
+sign in again before `/admin` lets them through.
 
 Both statuses negotiate on `Accept`: browsers get the `403.html` template, JSON
 clients get `{"error":"forbidden"}`. Prefer `response.NotFound` over `Forbidden`
@@ -101,8 +122,14 @@ asset tags, that a POST without a token is rejected with 401 while a POST with a
 token succeeds and surfaces a one-shot flash, that the JSON endpoint works, and
 that the protected route returns 401 until the user signs in, and that `/admin`
 returns 401 anonymous, 403 for a signed-in non-admin, and 200 once the user is on
-the allow-list.
+the allow-list. A small in-process fake identity provider (discovery, authorize,
+token and JWKS endpoints) drives the real OIDC flow, covering the POST-only
+logout (and its rendered 405), flow-state cleanup after a wrong state, a
+provider error, a failed exchange and a nonce mismatch, callback replay, CSRF
+token rotation at sign-in, and the `email_verified` requirement for admin. [`fuzz_test.go`](./fuzz_test.go) fuzzes the callback's
+`state` and `code`.
 
 ```sh
 go test ./...
+go test -run '^$' -fuzz '^FuzzCallbackState$' -fuzztime 30s .
 ```

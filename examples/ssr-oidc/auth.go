@@ -17,12 +17,14 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
 	"net/http"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/mikehelmick/go-bananas/logging"
 	"github.com/mikehelmick/go-bananas/render"
 	"github.com/mikehelmick/go-bananas/response"
 	gbsession "github.com/mikehelmick/go-bananas/session"
@@ -44,7 +46,11 @@ func randString(n int) (string, error) {
 type User struct {
 	Subject string
 	Email   string
-	Name    string
+	// EmailVerified records the provider's email_verified claim. Authorization
+	// keyed on Email must require it, or anyone who can register that address
+	// unverified at the provider inherits its grants.
+	EmailVerified bool
+	Name          string
 }
 
 func init() {
@@ -171,22 +177,35 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear the in-flight flow state on every exit, so a failed callback cannot
-	// be replayed and forces a fresh /login.
-	defer func() {
-		delete(session.Values, sessionStateKey)
-		delete(session.Values, sessionNonceKey)
-		delete(session.Values, sessionVerifierKey)
-	}()
-
+	// Take the in-flight flow state and clear it now, before anything is
+	// written, so a failed callback cannot be replayed and forces a fresh
+	// /login. Not in a defer: RequireSession saves the session on the first
+	// WriteHeader, so session changes made after the response starts are lost.
 	wantState, _ := session.Values[sessionStateKey].(string)
-	if wantState == "" || r.URL.Query().Get("state") != wantState {
+	wantNonce, _ := session.Values[sessionNonceKey].(string)
+	verifier, _ := session.Values[sessionVerifierKey].(string)
+	delete(session.Values, sessionStateKey)
+	delete(session.Values, sessionNonceKey)
+	delete(session.Values, sessionVerifierKey)
+
+	q := r.URL.Query()
+	if wantState == "" || subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(wantState)) != 1 {
 		response.BadRequest(w, r, o.renderer)
 		return
 	}
 
-	verifier, _ := session.Values[sessionVerifierKey].(string)
-	oauth2Token, err := o.oauth2.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(verifier))
+	// The provider reports a denied or failed authorization with an error
+	// parameter instead of a code (RFC 6749 §4.1.2.1). There is nothing to
+	// exchange: tell the user and send them home. The error value is
+	// provider-supplied, so it is logged, not shown.
+	if errCode := q.Get("error"); errCode != "" {
+		logging.FromContext(ctx).Warn("oidc authorization failed", "error", errCode)
+		gbsession.Flash(session).Warning("Sign-in was not completed.")
+		response.SeeOther(w, r, "/")
+		return
+	}
+
+	oauth2Token, err := o.oauth2.Exchange(ctx, q.Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
 		response.InternalError(w, r, o.renderer, fmt.Errorf("token exchange failed: %w", err))
 		return
@@ -202,8 +221,7 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wantNonce, _ := session.Values[sessionNonceKey].(string)
-	if idToken.Nonce != wantNonce {
+	if wantNonce == "" || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(wantNonce)) != 1 {
 		response.BadRequest(w, r, o.renderer)
 		return
 	}
@@ -212,6 +230,10 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		Subject string `json:"sub"`
 		Email   string `json:"email"`
 		Name    string `json:"name"`
+		// EmailVerified is decoded loosely so a provider that sends a
+		// non-boolean does not break sign-in; only the JSON boolean true
+		// counts as verified.
+		EmailVerified any `json:"email_verified"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		response.InternalError(w, r, o.renderer, err)
@@ -221,7 +243,13 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 	// Reset the session at the authentication boundary (fixation defense), then
 	// establish the authenticated principal.
 	resetSession(r)
-	storeUser(r, &User{Subject: idToken.Subject, Email: claims.Email, Name: claims.Name})
+	verified, _ := claims.EmailVerified.(bool)
+	storeUser(r, &User{
+		Subject:       idToken.Subject,
+		Email:         claims.Email,
+		EmailVerified: verified,
+		Name:          claims.Name,
+	})
 
 	gbsession.Flash(session).Alert("Welcome, %s!", claims.Name)
 	http.Redirect(w, r, "/me", http.StatusSeeOther)

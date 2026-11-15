@@ -96,6 +96,14 @@ type appConfig struct {
 	// a signed-in user hitting /admin gets a 403.
 	AdminEmails []string `env:"ADMIN_EMAILS"`
 
+	// ServerEndpoint is the canonical base URL (for example
+	// https://app.example.com) exposed to templates as serverEndpoint. Set it
+	// in production. AllowedHosts is the fallback when it is unset: a
+	// comma-separated list of bare hosts the endpoint may be derived from.
+	// With neither, serverEndpoint is empty outside dev mode.
+	ServerEndpoint string   `env:"SERVER_ENDPOINT"`
+	AllowedHosts   []string `env:"ALLOWED_HOSTS"`
+
 	DevMode bool   `env:"DEV_MODE, default=false"`
 	Port    string `env:"PORT, default=8080"`
 	BuildID string `env:"BUILD_ID, default=dev"`
@@ -143,6 +151,11 @@ type app struct {
 	devMode  bool
 	buildID  string
 	oidc     *OIDC // nil when OIDC is not configured
+
+	// serverEndpoint and allowedHosts feed TemplateConfig, so rendered links
+	// never come from a client-chosen Host header.
+	serverEndpoint string
+	allowedHosts   []string
 
 	// admins is the set of email addresses permitted on the /admin route.
 	admins map[string]struct{}
@@ -204,6 +217,9 @@ func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
 		devMode:  devMode,
 		buildID:  cfg.BuildID,
 		admins:   admins,
+
+		serverEndpoint: cfg.ServerEndpoint,
+		allowedHosts:   cfg.AllowedHosts,
 	}
 
 	if cfg.OIDC.Issuer != "" {
@@ -241,9 +257,11 @@ func (a *app) router() http.Handler {
 	}))
 	r.Use(middleware.HandleCSRF(a.renderer))
 	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{
-		ServerName: "go-bananas",
-		BuildID:    a.buildID,
-		DevMode:    a.devMode,
+		ServerName:     "go-bananas",
+		ServerEndpoint: a.serverEndpoint,
+		AllowedHosts:   a.allowedHosts,
+		BuildID:        a.buildID,
+		DevMode:        a.devMode,
 	}))
 	r.Use(middleware.InjectCurrentPath())
 	r.Use(middleware.ProcessLocale(a.locales))
@@ -262,7 +280,9 @@ func (a *app) router() http.Handler {
 	r.HandleFunc("/", a.handleHome).Methods(http.MethodGet)
 	r.HandleFunc("/submit", a.handleSubmit).Methods(http.MethodPost)
 	r.HandleFunc("/api/health", a.handleHealth).Methods(http.MethodGet)
-	r.HandleFunc("/logout", a.handleLogout).Methods(http.MethodGet)
+	// Logout changes state, so it is a CSRF-protected POST: a GET link would let
+	// any site sign the user out.
+	r.HandleFunc("/logout", a.handleLogout).Methods(http.MethodPost)
 
 	if a.oidc != nil {
 		r.HandleFunc("/login", a.oidc.Login).Methods(http.MethodGet)
@@ -291,9 +311,16 @@ func (a *app) router() http.Handler {
 	admin.Use(a.requireAdmin)
 	admin.HandleFunc("/admin", a.handleAdmin).Methods(http.MethodGet)
 
-	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	// mux runs r.Use middleware only for a matched route, so the 404 and 405
+	// handlers get the security headers by wrapping them directly.
+	errorHeaders := func(h http.HandlerFunc) http.Handler {
+		return middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML)(
+			middleware.ProcessNonce()(middleware.ContentSecurityPolicy(csp)(h)))
+	}
+	r.NotFoundHandler = errorHeaders(func(w http.ResponseWriter, req *http.Request) {
 		response.NotFound(w, req, a.renderer)
 	})
+	r.MethodNotAllowedHandler = errorHeaders(a.handleMethodNotAllowed)
 
 	return r
 }
@@ -330,9 +357,14 @@ func (a *app) requireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// isAdmin reports whether u is on the configured admin allow-list. A real
-// application would consult its own role or membership store.
+// isAdmin reports whether u is on the configured admin allow-list. The email
+// must be verified by the provider: an unverified address proves nothing about
+// who holds it. A real application would consult its own role or membership
+// store, keyed on the stable subject rather than the email.
 func (a *app) isAdmin(u *User) bool {
+	if !u.EmailVerified {
+		return false
+	}
 	_, ok := a.admins[strings.ToLower(u.Email)]
 	return ok
 }
@@ -412,6 +444,23 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 	response.SeeOther(w, r, "/")
 }
 
+// handleMethodNotAllowed renders a 405 negotiated on Accept, mirroring the
+// response package's error helpers (which have no 405 variant).
+func (a *app) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	const code = http.StatusMethodNotAllowed
+	accept := r.Header.Get("Accept")
+	switch {
+	case strings.Contains(accept, "text/html"):
+		m := webctx.TemplateMapFromContext(r.Context())
+		m.Title("%s", http.StatusText(code))
+		a.renderer.RenderHTMLStatus(w, code, "405", m)
+	case strings.Contains(accept, "application/json"):
+		a.renderer.RenderJSON(w, code, map[string]string{"error": "method not allowed"})
+	default:
+		http.Error(w, http.StatusText(code), code)
+	}
+}
+
 func (a *app) handleLoginUnavailable(w http.ResponseWriter, r *http.Request) {
 	gbsession.Flash(webctx.SessionFromContext(r.Context())).
 		Warning("OIDC sign-in is not configured. Set OIDC_ISSUER to enable it.")
@@ -420,7 +469,7 @@ func (a *app) handleLoginUnavailable(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	resetSession(r) // fixation defense at the login boundary
-	storeUser(r, &User{Subject: "dev|1", Email: "dev@example.com", Name: "Dev User"})
+	storeUser(r, &User{Subject: "dev|1", Email: "dev@example.com", EmailVerified: true, Name: "Dev User"})
 	gbsession.Flash(webctx.SessionFromContext(r.Context())).Alert("Signed in as the dev user.")
 	response.SeeOther(w, r, "/me")
 }
