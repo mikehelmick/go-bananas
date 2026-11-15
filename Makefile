@@ -93,6 +93,31 @@ test-examples:
 	done
 .PHONY: test-examples
 
+# fuzz runs every native Go fuzz target for FUZZTIME each, one target at a
+# time because -fuzz accepts a single package and target. It covers the root
+# module and the nested examples/ssr-oidc module, and stops on the first
+# failure. Minimization is capped so a crasher does not stall the run.
+FUZZTIME ?= 30s
+
+fuzz:
+	@for dir in . ./examples/ssr-oidc; do \
+		tags=""; \
+		if [ "$$dir" = "." ]; then tags="-tags=google"; fi; \
+		list="$$(cd "$$dir" && go test $$tags -list '^Fuzz' ./...)" || { echo "$$list"; exit 1; }; \
+		targets="$$(echo "$$list" | awk '/^Fuzz/ { names = names " " $$1; next } /^ok/ { n = split(names, a, " "); for (i = 1; i <= n; i++) print $$2, a[i]; names = "" }')"; \
+		echo "$$targets" | while read -r pkg name; do \
+			[ -n "$$pkg" ] || continue; \
+			echo "==> $$pkg $$name"; \
+			(cd "$$dir" && go test $$tags \
+				-run '^$$' \
+				-fuzz "^$$name$$" \
+				-fuzztime $(FUZZTIME) \
+				-fuzzminimizetime 5s \
+				"$$pkg") || exit 1; \
+		done || exit 1; \
+	done
+.PHONY: fuzz
+
 test-coverage:
 	@go tool cover -func=./coverage.out
 .PHONY: test-coverage
