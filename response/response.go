@@ -16,9 +16,10 @@ package response
 
 import (
 	"errors"
-	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/mikehelmick/go-bananas/internal/util"
@@ -209,10 +210,14 @@ func RealHostFromRequest(r *http.Request) string {
 		port = ""
 	}
 
-	if port == "" {
-		return fmt.Sprintf("%s://%s", scheme, host)
+	// Hostname strips the brackets from an IPv6 literal; put them back.
+	if port != "" {
+		return scheme + "://" + net.JoinHostPort(host, port)
 	}
-	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	if strings.Contains(host, ":") {
+		return scheme + "://[" + host + "]"
+	}
+	return scheme + "://" + host
 }
 
 // TracedHTTPClient returns an HTTP client whose requests carry the X-Request-ID

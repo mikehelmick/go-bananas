@@ -209,6 +209,8 @@ func TestRealHostFromRequest(t *testing.T) {
 		{"remote_default_port", "example.com:443", "https://example.com"},
 		{"remote_custom_port", "example.com:8443", "https://example.com:8443"},
 		{"localhost_custom_port", "localhost:3000", "http://localhost:3000"},
+		{"ipv6_custom_port", "[::1]:8443", "https://[::1]:8443"},
+		{"ipv6_default_port", "[2001:db8::1]:443", "https://[2001:db8::1]"},
 	}
 
 	for _, tc := range cases {
