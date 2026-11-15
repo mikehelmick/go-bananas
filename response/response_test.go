@@ -26,7 +26,7 @@ import (
 	"github.com/mikehelmick/go-bananas/render"
 )
 
-func testRenderer(t *testing.T) *render.Renderer {
+func testRenderer(t testing.TB) *render.Renderer {
 	t.Helper()
 	fsys := fs.FS(fstest.MapFS{
 		"401.html": &fstest.MapFile{Data: []byte(`{{define "401"}}unauthorized page{{end}}`)},
@@ -138,6 +138,61 @@ func TestBack(t *testing.T) {
 				t.Errorf("Location = %q, want %q", got, tc.wantDest)
 			}
 		})
+	}
+}
+
+// TestBackRejectsNonHTTPReferer guards finding #20: a same-host referrer with a
+// non-http(s) scheme, or with no host at all, must not be redirected to.
+func TestBackRejectsNonHTTPReferer(t *testing.T) {
+	t.Parallel()
+
+	h := testRenderer(t)
+
+	cases := []struct {
+		name    string
+		referer string
+		host    string
+	}{
+		{"javascript", "javascript://example.com/x", "example.com"},
+		{"javascript_upper", "JAVASCRIPT://example.com/%0aalert(1)", "example.com"},
+		{"data", "data://example.com/text/html,hi", "example.com"},
+		{"ftp", "ftp://example.com/x", "example.com"},
+		{"scheme_relative", "//example.com/x", "example.com"},
+		{"empty_host_triple_slash", "https:///evil.com/x", ""},
+		{"empty_host_backslash", `https:\\evil.com`, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Host = tc.host
+			req.Header.Set("Referer", tc.referer)
+			w := httptest.NewRecorder()
+
+			Back(w, req, h)
+
+			if got := w.Header().Get("Location"); got != "/" {
+				t.Errorf("Location = %q, want %q", got, "/")
+			}
+		})
+	}
+}
+
+// TestBackStripsUserinfo checks that userinfo, which only serves to make a
+// same-host URL look like another site, is removed before redirecting.
+func TestBackStripsUserinfo(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "example.com"
+	req.Header.Set("Referer", "https://login.bank@example.com/x")
+	w := httptest.NewRecorder()
+
+	Back(w, req, testRenderer(t))
+
+	if got, want := w.Header().Get("Location"), "https://example.com/x"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
 	}
 }
 

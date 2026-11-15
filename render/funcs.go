@@ -44,7 +44,7 @@ func (r *Renderer) templateFuncs() htmltemplate.FuncMap {
 		"stringContains": strings.Contains,
 		"toLower":        strings.ToLower,
 		"toUpper":        strings.ToUpper,
-		"toJSON":         json.Marshal,
+		"toJSON":         toJSON,
 		"humanizeTime":   humanizeTime,
 		"toBase64":       base64.StdEncoding.EncodeToString,
 		"toPercent":      toPercent,
@@ -82,7 +82,7 @@ func (r *Renderer) textFuncs() texttemplate.FuncMap {
 		"stringContains": strings.Contains,
 		"toLower":        strings.ToLower,
 		"toUpper":        strings.ToUpper,
-		"toJSON":         json.Marshal,
+		"toJSON":         toJSONString,
 		"humanizeTime":   humanizeTime,
 		"toBase64":       base64.StdEncoding.EncodeToString,
 		"toPercent":      toPercent,
@@ -94,7 +94,35 @@ func (r *Renderer) textFuncs() texttemplate.FuncMap {
 	return m
 }
 
-// safeHTML marks a known-safe string as HTML that does not need escaping.
+// toJSON marshals v as JSON for embedding in an HTML template, typically in a
+// script element: {{toJSON .}}. [json.Marshal] escapes <, > and & (so the
+// output never contains "</script" or "<!--") as well as U+2028 and U+2029, so
+// the result is safe to mark as [htmltemplate.JS]. Like html/template's own JS
+// value escaper, it pads the output with spaces so that, for example,
+// "return{{toJSON .}}" cannot become "return5". It backs the HTML "toJSON"
+// template function.
+func toJSON(v any) (htmltemplate.JS, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return htmltemplate.JS(" " + string(b) + " "), nil
+}
+
+// toJSONString marshals v as JSON and returns it as a string. It backs the text
+// template "toJSON" function. Like [json.Marshal], it HTML-escapes <, > and &
+// (as <, > and &); the result is still valid JSON.
+func toJSONString(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// safeHTML marks s as HTML that must not be escaped. It backs the "safeHTML"
+// template function. Never pass it user-controlled data: the string is emitted
+// verbatim, so any markup or script in it runs in the page.
 func safeHTML(s string) htmltemplate.HTML {
 	return htmltemplate.HTML(s)
 }

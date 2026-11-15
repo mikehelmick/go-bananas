@@ -106,32 +106,40 @@ func (f *Flash) Clone(values map[any]any) {
 }
 
 // add inserts the message into the upcoming flash for the given key, ensuring
-// duplicate messages are not added.
+// duplicate messages are not added. A value of any other type stored at the key
+// (for example from an older or tampered session) is replaced.
 func (f *Flash) add(key flashKey, msg string, vars ...any) {
-	if _, ok := f.values[key]; !ok {
-		f.values[key] = make(map[string]struct{})
+	m, ok := f.values[key].(map[string]struct{})
+	if !ok || m == nil {
+		m = make(map[string]struct{})
+		f.values[key] = m
 	}
-	m := fmt.Sprintf(msg, vars...)
-	f.values[key].(map[string]struct{})[m] = struct{}{}
+	m[fmt.Sprintf(msg, vars...)] = struct{}{}
 }
 
 // get returns the messages stored at the key, clearing them in the process. The
-// returned messages are sorted case-insensitively.
+// returned messages are sorted case-insensitively. A value of any other type
+// stored at the key is discarded.
 func (f *Flash) get(key flashKey) []string {
-	if v, ok := f.values[key]; ok {
-		delete(f.values, key)
-
-		m := v.(map[string]struct{})
-		flashes := make([]string, 0, len(m))
-		for k := range m {
-			flashes = append(flashes, k)
-		}
-
-		sort.Slice(flashes, func(i, j int) bool {
-			return strings.ToLower(flashes[i]) < strings.ToLower(flashes[j])
-		})
-
-		return flashes
+	v, ok := f.values[key]
+	if !ok {
+		return nil
 	}
-	return nil
+	delete(f.values, key)
+
+	m, ok := v.(map[string]struct{})
+	if !ok {
+		return nil
+	}
+
+	flashes := make([]string, 0, len(m))
+	for k := range m {
+		flashes = append(flashes, k)
+	}
+
+	sort.Slice(flashes, func(i, j int) bool {
+		return strings.ToLower(flashes[i]) < strings.ToLower(flashes[j])
+	})
+
+	return flashes
 }
