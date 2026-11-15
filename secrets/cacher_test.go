@@ -83,6 +83,9 @@ func TestFetchContextDeadline(t *testing.T) {
 	t.Parallel()
 
 	later := time.Now().Add(time.Hour)
+	// earlier is before the fetch timeout, but far enough out that the fetch
+	// context is still live when checked.
+	earlier := time.Now().Add(cacherFetchTimeout / 3)
 	wantFetchTimeout := func() (time.Time, time.Time) {
 		now := time.Now()
 		return now.Add(cacherFetchTimeout - time.Second), now.Add(cacherFetchTimeout + 5*time.Second)
@@ -100,14 +103,16 @@ func TestFetchContextDeadline(t *testing.T) {
 		{
 			name: "earlier deadline",
 			ctx: func() (context.Context, context.CancelFunc) {
-				return context.WithTimeout(context.Background(), time.Second)
+				return context.WithDeadline(context.Background(), earlier)
 			},
-			want: wantFetchTimeout,
+			want: func() (time.Time, time.Time) { return earlier, earlier },
 		},
 		{
+			// The fetch never outlives cacherFetchTimeout, even when the
+			// first caller would wait longer.
 			name: "later deadline",
 			ctx:  func() (context.Context, context.CancelFunc) { return context.WithDeadline(context.Background(), later) },
-			want: func() (time.Time, time.Time) { return later, later },
+			want: wantFetchTimeout,
 		},
 	}
 	for _, tc := range cases {
