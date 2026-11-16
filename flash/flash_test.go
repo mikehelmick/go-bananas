@@ -167,6 +167,41 @@ func TestFlash_add(t *testing.T) {
 	}
 }
 
+// TestFlashNonMapValue guards finding #19: a flash key holding a value of the
+// wrong type (for example from an older or tampered session) must not panic;
+// it is discarded and replaced.
+func TestFlashNonMapValue(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		value any
+	}{
+		{"string", "str"},
+		{"int", 42},
+		{"nil", nil},
+		{"other_map", map[string]string{"a": "b"}},
+		{"nil_map", map[string]struct{}(nil)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := New(map[any]any{flashKeyError: tc.value})
+			if got := f.Errors(); len(got) != 0 {
+				t.Errorf("Errors() = %v, want empty", got)
+			}
+
+			f = New(map[any]any{flashKeyError: tc.value})
+			f.Error("x")
+			if got, want := f.Errors(), []string{"x"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("Errors() = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestFlash_get(t *testing.T) {
 	t.Parallel()
 

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 // RenderJSON renders data as JSON with the given status code, buffering first so
@@ -125,10 +124,13 @@ func (r *Renderer) RenderJSON500(w http.ResponseWriter, err error) {
 	})
 }
 
-// escapeJSON does primitive JSON string escaping for use with the Printf-based
-// error template.
+// escapeJSON escapes s as the body of a JSON string (without the surrounding
+// quotes) for use with the Printf-based error template. Invalid UTF-8 is
+// replaced with U+FFFD.
 func escapeJSON(s string) string {
-	return strings.ReplaceAll(s, `"`, `\"`)
+	// Marshaling a string cannot fail.
+	b, _ := json.Marshal(s)
+	return string(b[1 : len(b)-1])
 }
 
 // jsonErrTmpl is the template used to return a JSON error. It is rendered with

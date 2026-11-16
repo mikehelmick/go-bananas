@@ -36,8 +36,10 @@ var (
 )
 
 // Back redirects to the request's referrer with a 303 See Other. If the referrer
-// is missing, unparseable, or points at a different host, it redirects to "/"
-// instead, preventing open-redirect abuse. The renderer parameter is accepted
+// is missing, unparseable, not an absolute http or https URL, or points at a
+// different (or empty) host, it redirects to "/" instead, preventing
+// open-redirect and script-URL abuse. Userinfo in the referrer is removed. The
+// renderer parameter is accepted
 // for signature consistency with the other helpers but is unused.
 func Back(w http.ResponseWriter, r *http.Request, _ *render.Renderer) {
 	logger := logging.Named(logging.FromContext(r.Context()), "response.Back")
@@ -56,14 +58,24 @@ func Back(w http.ResponseWriter, r *http.Request, _ *render.Renderer) {
 		return
 	}
 
-	if got, want := refURL.Host, r.Host; got != want {
+	if refURL.Scheme != "http" && refURL.Scheme != "https" {
+		logger.Warn("referrer scheme is not http or https", "scheme", refURL.Scheme)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if got, want := refURL.Host, r.Host; got == "" || got != want {
 		logger.Warn("referrer host mismatch", "got", got, "want", want)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
-	//nolint:gosec // G710: ref is same-host, checked above.
-	http.Redirect(w, r, ref, http.StatusSeeOther)
+	// Drop any userinfo, which can only make a same-host URL look like another
+	// site ("https://login.bank@example.com/").
+	refURL.User = nil
+
+	//nolint:gosec // G710: refURL is an http(s) URL on this host, checked above.
+	http.Redirect(w, r, refURL.String(), http.StatusSeeOther)
 }
 
 // SeeOther issues a 303 See Other redirect to path. It is a convenience for

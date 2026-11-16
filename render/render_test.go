@@ -15,11 +15,13 @@
 package render
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	htmltemplate "html/template"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -242,7 +244,7 @@ func TestRenderCSV(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	if got := w.Header().Get("Content-Disposition"); got != "attachment;filename=report.csv" {
+	if got := w.Header().Get("Content-Disposition"); got != "attachment; filename=report.csv" {
 		t.Errorf("content-disposition = %q", got)
 	}
 	if w.Body.String() != "a,b\n1,2\n" {
@@ -254,5 +256,167 @@ func TestRenderCSV(t *testing.T) {
 	r.RenderCSV(w, http.StatusOK, "", errCSV{err: fmt.Errorf("nope")})
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}
+
+// TestRenderCSVFilenameQuoted guards finding #15: a filename carrying header
+// parameter syntax must not inject extra Content-Disposition parameters.
+func TestRenderCSVFilenameQuoted(t *testing.T) {
+	t.Parallel()
+
+	r := mustNew(t, testFS("body{}"))
+
+	const filename = "x.csv; filename*=UTF-8''evil.html"
+	w := httptest.NewRecorder()
+	r.RenderCSV(w, http.StatusOK, filename, errCSV{data: []byte("a\n")})
+
+	header := w.Header().Get("Content-Disposition")
+	disposition, params, err := mime.ParseMediaType(header)
+	if err != nil {
+		t.Fatalf("ParseMediaType(%q): %v", header, err)
+	}
+	if disposition != "attachment" {
+		t.Errorf("disposition = %q, want attachment", disposition)
+	}
+	if got := params["filename"]; got != filename {
+		t.Errorf("filename = %q, want %q (header %q)", got, filename, header)
+	}
+	if _, ok := params["filename*"]; ok {
+		t.Errorf("unexpected filename* parameter in %q", header)
+	}
+	if len(params) != 1 {
+		t.Errorf("params = %v, want only filename", params)
+	}
+}
+
+// failingJSON fails to marshal with the given message.
+type failingJSON struct{ msg string }
+
+func (f failingJSON) MarshalJSON() ([]byte, error) { return nil, errors.New(f.msg) }
+
+// TestRenderJSONErrorValid guards finding #16: the Printf-based error body must
+// be valid JSON whatever the error text contains.
+func TestRenderJSONErrorValid(t *testing.T) {
+	t.Parallel()
+
+	r := mustNew(t, testFS("body{}"), WithDevMode(true))
+
+	const msg = "a\\b\"c\n"
+	w := httptest.NewRecorder()
+	r.RenderJSON(w, http.StatusOK, failingJSON{msg: msg})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	body := w.Body.Bytes()
+	if !json.Valid(body) {
+		t.Fatalf("body is not valid JSON: %q", body)
+	}
+	var got struct{ Error string }
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !strings.HasSuffix(got.Error, msg) {
+		t.Errorf("error = %q, want suffix %q", got.Error, msg)
+	}
+}
+
+// TestToJSONInScript guards finding #17: toJSON must emit JSON that is safe to
+// embed in a script element and that round-trips.
+func TestToJSONInScript(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"script.html": &fstest.MapFile{Data: []byte(
+			`{{define "script"}}<script>var x = {{toJSON .}};</script>{{end}}`)},
+	}
+	r := mustNew(t, fsys)
+
+	in := map[string]string{"a": "</script><b>"}
+	w := httptest.NewRecorder()
+	r.RenderHTML(w, "script", in)
+
+	body := w.Body.String()
+	if strings.Contains(body, "</script><b>") {
+		t.Fatalf("body contains unescaped script close: %s", body)
+	}
+
+	const prefix, suffix = "<script>var x = ", ";</script>"
+	if !strings.HasPrefix(body, prefix) || !strings.HasSuffix(body, suffix) {
+		t.Fatalf("unexpected body shape: %s", body)
+	}
+	literal := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(body, prefix), suffix))
+
+	var got map[string]string
+	if err := json.Unmarshal([]byte(literal), &got); err != nil {
+		t.Fatalf("literal %q is not JSON: %v", literal, err)
+	}
+	if got["a"] != in["a"] || len(got) != len(in) {
+		t.Errorf("round-trip = %v, want %v", got, in)
+	}
+}
+
+// TestToJSONPadded checks that toJSON pads its output like html/template's JS
+// value escaper, so it cannot merge with an adjacent identifier.
+func TestToJSONPadded(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"ret.html": &fstest.MapFile{Data: []byte(
+			`{{define "ret"}}<script>function f(){return{{toJSON .}}}</script>{{end}}`)},
+	}
+	r := mustNew(t, fsys)
+
+	w := httptest.NewRecorder()
+	r.RenderHTML(w, "ret", 5)
+	if got, want := w.Body.String(), "<script>function f(){return 5 }</script>"; got != want {
+		t.Errorf("body = %q, want %q", got, want)
+	}
+}
+
+// TestRenderCSVFilenameNonASCII checks that a non-ASCII filename is sent both
+// as an ASCII filename= fallback and as RFC 2231 filename*= (RFC 6266 4.3).
+func TestRenderCSVFilenameNonASCII(t *testing.T) {
+	t.Parallel()
+
+	r := mustNew(t, testFS("body{}"))
+
+	const filename = "résumé \"x\".csv"
+	w := httptest.NewRecorder()
+	r.RenderCSV(w, http.StatusOK, filename, errCSV{data: []byte("a\n")})
+
+	header := w.Header().Get("Content-Disposition")
+	if want := `attachment; filename="r_sum_ \"x\".csv"; filename*=utf-8''`; !strings.HasPrefix(header, want) {
+		t.Errorf("header = %q, want prefix %q", header, want)
+	}
+	_, params, err := mime.ParseMediaType(header)
+	if err != nil {
+		t.Fatalf("ParseMediaType(%q): %v", header, err)
+	}
+	if got := params["filename"]; got != filename {
+		t.Errorf("filename = %q, want %q", got, filename)
+	}
+}
+
+// TestTextToJSONIsString guards reviewer item L5: in text templates toJSON
+// returns a string, so it prints as JSON rather than as a byte slice.
+func TestTextToJSONIsString(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"data.txt": &fstest.MapFile{Data: []byte(`{{define "data"}}{{toJSON .}}{{end}}`)},
+	}
+	r := mustNew(t, fsys)
+
+	if _, ok := r.textFuncs()["toJSON"].(func(any) (string, error)); !ok {
+		t.Errorf("text toJSON has type %T, want func(any) (string, error)", r.textFuncs()["toJSON"])
+	}
+
+	var buf strings.Builder
+	if err := r.RenderText(&buf, "data", map[string]string{"a": "b"}); err != nil {
+		t.Fatalf("RenderText: %v", err)
+	}
+	if got, want := buf.String(), `{"a":"b"}`; got != want {
+		t.Errorf("RenderText = %q, want %q", got, want)
 	}
 }
