@@ -21,10 +21,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/mikehelmick/go-bananas/internal/util"
+	"github.com/mikehelmick/go-bananas/webctx"
 )
 
 // FuzzMutateMethodCSRF sends requests through MutateMethod, RequireSession
@@ -251,6 +253,196 @@ func FuzzCSRFToken(f *testing.F) {
 			if err != nil || !bytes.Equal(back, raw) {
 				t.Errorf("unmask(mask(%q)) = %q, %v", raw, back, err)
 			}
+		}
+	})
+}
+
+// FuzzTraceID sends an arbitrary trace header through PopulateTraceID. The
+// middleware never generates an ID: it stores the portion before the first
+// "/" when that is well-formed, and stores nothing otherwise. Whatever lands on
+// the context must match validTraceID, because response.TracedHTTPClient
+// re-emits it on outbound requests.
+func FuzzTraceID(f *testing.F) {
+	f.Add("105445aa7843bc8bf206b12000100000/1;o=1")
+	f.Add("1d09592c-3914-4ff9-83cd-29659da1d4ac")
+	f.Add(" abc /1")
+	f.Add("abc\r\nX-Injected: 1")
+	f.Add("abc\tdef")
+	f.Add("/abc")
+	f.Add("///")
+	f.Add(strings.Repeat("a", 128))
+	f.Add(strings.Repeat("a", 129))
+	f.Add("abéc")
+	f.Add("")
+
+	traceID := regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+	f.Fuzz(func(t *testing.T, header string) {
+		var got string
+		h := PopulateTraceID()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			got = webctx.TraceIDFromContext(r.Context())
+		}))
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header[TraceHeader] = []string{header}
+		h.ServeHTTP(httptest.NewRecorder(), r)
+
+		if got == "" {
+			return
+		}
+		if !traceID.MatchString(got) {
+			t.Fatalf("stored trace ID %q from header %q is malformed", got, header)
+		}
+		prefix, _, _ := strings.Cut(header, "/")
+		if got != strings.TrimSpace(prefix) {
+			t.Fatalf("stored trace ID %q, want the header prefix %q", got, prefix)
+		}
+	})
+}
+
+// FuzzProcessLocale runs ProcessLocale over a stub provider that echoes the
+// first non-empty hint as the language. textDirection must always be ltr or
+// rtl, and rtl only for a right-aligned language.
+func FuzzProcessLocale(f *testing.F) {
+	f.Add("", "")
+	f.Add("ar", "")
+	f.Add("", "ar")
+	f.Add("AR", "en-US,en;q=0.9")
+	f.Add("ar-EG", "")
+	f.Add("en\x00", "ar")
+	f.Add("ar;q=1", "ar")
+
+	f.Fuzz(func(t *testing.T, lang, acceptLang string) {
+		var m webctx.TemplateMap
+		next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			m = webctx.TemplateMapFromContext(r.Context())
+		})
+
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.URL.RawQuery = url.Values{QueryKeyLanguage: {lang}}.Encode()
+		r.Header[HeaderAcceptLanguage] = []string{acceptLang}
+		ProcessLocale(fakeLocaleProvider{})(next).ServeHTTP(httptest.NewRecorder(), r)
+
+		if m == nil {
+			t.Fatal("handler did not run")
+		}
+		_, wantLang := fakeLocaleProvider{}.Lookup(lang, acceptLang)
+		if m["textLanguage"] != wantLang {
+			t.Fatalf("textLanguage = %v, want %q", m["textLanguage"], wantLang)
+		}
+		dir := m["textDirection"]
+		switch dir {
+		case LeftAlign, RightAlign:
+		default:
+			t.Fatalf("textDirection = %v, want ltr or rtl", dir)
+		}
+		_, rtl := rightAlignLanguages[wantLang]
+		if (dir == RightAlign) != rtl {
+			t.Fatalf("textDirection = %v for language %q", dir, wantLang)
+		}
+	})
+}
+
+// FuzzRequireHostHeader checks that RequireHostHeader with stripPort admits a
+// request only when its Host, cut at the first ":" (when that is not the first
+// byte), equals example.com ignoring case. Cutting at the first colon means a
+// bracketed IPv6 host never matches; that fails closed.
+func FuzzRequireHostHeader(f *testing.F) {
+	f.Add("example.com")
+	f.Add("EXAMPLE.COM")
+	f.Add("example.com:8080")
+	f.Add("example.com:")
+	f.Add("example.com.")
+	f.Add(":example.com")
+	f.Add("evil.com:example.com")
+	f.Add("example.com.evil.com")
+	f.Add("[::1]:443")
+	f.Add("example.coK")
+	f.Add("")
+
+	handler := RequireHostHeader([]string{"example.com"}, testRenderer(f), true)(okHandler("ok"))
+
+	f.Fuzz(func(t *testing.T, host string) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		name := host
+		if i := strings.Index(name, ":"); i > 0 {
+			name = name[:i]
+		}
+		allowed := strings.EqualFold(name, "example.com")
+		if got := w.Code == http.StatusOK; got != allowed {
+			t.Fatalf("host %q: status %d, allowed = %v", host, w.Code, allowed)
+		}
+	})
+}
+
+// FuzzStaticPath checks that ConfigureStaticAssets, in either mode, never
+// serves a directory path: a file server would answer it with a listing.
+func FuzzStaticPath(f *testing.F) {
+	f.Add("/")
+	f.Add("/static/")
+	f.Add("/static/app.css")
+	f.Add("/static/..%2f")
+	f.Add("//")
+	f.Add("/static/app.css/")
+	f.Add("")
+
+	handlers := []http.Handler{
+		ConfigureStaticAssets(false)(okHandler("listing")),
+		ConfigureStaticAssets(true)(okHandler("listing")),
+	}
+
+	f.Fuzz(func(t *testing.T, path string) {
+		for _, h := range handlers {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.URL.Path = path
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if strings.HasSuffix(path, "/") && w.Code == http.StatusOK {
+				t.Fatalf("directory path %q served with 200", path)
+			}
+		}
+	})
+}
+
+// FuzzCSP checks ContentSecurityPolicy with no nonce on the context. When the
+// policy's only nonce sources are the 'nonce-{{nonce}}' placeholder, the
+// header must carry no nonce source at all, since it would be empty and
+// guessable. With a nonce on the context, every placeholder is filled in.
+func FuzzCSP(f *testing.F) {
+	f.Add("default-src 'self'")
+	f.Add("script-src 'self' 'nonce-{{nonce}}'")
+	f.Add("script-src 'nonce-{{nonce}}'; style-src 'nonce-{{nonce}}' ; img-src *")
+	f.Add("script-src {{nonce}}")
+	f.Add("script-src 'nonce-{{nonce}}{{nonce}}'")
+	f.Add("script-src 'nonce-{{{{nonce}}nonce}}'")
+	f.Add("script-src 'nonce-")
+	f.Add("")
+
+	const nonce = "dGVzdG5vbmNl"
+
+	f.Fuzz(func(t *testing.T, policy string) {
+		if strings.Contains(strings.ReplaceAll(policy, "'nonce-"+CSPNoncePlaceholder+"'", ""), "'nonce-") {
+			t.Skip("policy carries a nonce source other than the placeholder")
+		}
+		h := ContentSecurityPolicy(policy)(okHandler("ok"))
+
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+		if got := w.Header().Get("Content-Security-Policy"); strings.Contains(got, "'nonce-") {
+			t.Fatalf("policy %q without a nonce produced %q", policy, got)
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r = r.WithContext(webctx.WithNonce(r.Context(), nonce))
+		w = httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := strings.ReplaceAll(policy, CSPNoncePlaceholder, nonce)
+		if got := w.Header().Get("Content-Security-Policy"); got != want {
+			t.Fatalf("policy %q with nonce produced %q, want %q", policy, got, want)
 		}
 	})
 }

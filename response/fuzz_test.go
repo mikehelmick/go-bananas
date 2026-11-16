@@ -76,3 +76,77 @@ func FuzzBack(f *testing.F) {
 		}
 	})
 }
+
+// FuzzRealHost builds a request from an arbitrary Host header and request
+// URI and checks that RealHostFromRequest does not panic and returns a URL
+// that url.Parse accepts. It caught IPv6 hosts losing their brackets
+// ("[::1]:8443" became "https://::1:8443").
+func FuzzRealHost(f *testing.F) {
+	seeds := []struct{ host, uri string }{
+		{"example.com", "/"},
+		{"example.com:443", "/x"},
+		{"localhost:80", "/"},
+		{"127.0.0.1:8080", "/"},
+		{"[::1]:8443", "/"},
+		{"[::1", "/"},
+		{"example.com", "https://other.example:443/x"},
+		{"example.com", "http://[fe80::1]:80/"},
+		{"[2001:db8::1]", "/"},
+		{"[::ffff:127.0.0.1]:443", "/"},
+		{"", "/"},
+		{"a b", "/"},
+		{"example.com:abc", "/"},
+		{"evil.com/path?x#y", "/"},
+		{"user@example.com", "/"},
+		{"example.com", "//evil.com/x"},
+		{"example.com", "*"},
+	}
+	for _, s := range seeds {
+		f.Add(s.host, s.uri)
+	}
+
+	f.Fuzz(func(t *testing.T, host, uri string) {
+		u, err := url.ParseRequestURI(uri)
+		if err != nil {
+			t.Skip("not a valid request URI")
+		}
+		if !validHostHeader(host) {
+			t.Skip("net/http rejects this Host header with 400")
+		}
+		// Malformed authorities (an unclosed bracket, a non-numeric port, an
+		// unbracketed IPv6 literal such as "::") and IPv6 zone IDs, which no
+		// browser sends, are out of scope: there is no well-formed URL to return
+		// for them.
+		effective := host
+		if u.IsAbs() {
+			effective = u.Host
+		}
+		pu, err := url.Parse("//" + effective)
+		if err != nil ||
+			strings.Contains(pu.Hostname(), ":") && !strings.HasPrefix(pu.Host, "[") ||
+			strings.Contains(effective, "%") && strings.Contains(effective, "[") {
+			t.Skip("malformed authority")
+		}
+		r := &http.Request{Method: http.MethodGet, URL: u, Host: host, Header: http.Header{}}
+
+		got := RealHostFromRequest(r)
+		if _, err := url.Parse(got); err != nil {
+			t.Fatalf("RealHostFromRequest(host=%q, uri=%q) = %q, which does not parse: %v", host, uri, got, err)
+		}
+	})
+}
+
+// validHostHeader mirrors the byte check net/http's server applies to the Host
+// header (httpguts.ValidHostHeader) before a handler ever sees the request.
+func validHostHeader(h string) bool {
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		case strings.IndexByte("!$%&'()*+,-.:;=[]_~", c) >= 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
