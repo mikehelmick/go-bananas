@@ -1,0 +1,3 @@
+{{/* logoutForm signs the user out. Logout changes state, so it is a
+CSRF-protected POST rather than a link. */}}
+{{define "logoutForm"}}<form method="post" action="/logout" class="inline">{{.csrfField}}<button type="submit">Sign out</button></form>{{end}}

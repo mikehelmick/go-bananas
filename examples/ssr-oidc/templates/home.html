@@ -35,7 +35,8 @@
     </form>
 
     {{if .principal}}
-      <p>Signed in as <strong>{{.principal.Name}}</strong> ({{.principal.Email}}). <a href="/logout">Sign out</a></p>
+      <p>Signed in as <strong>{{.principal.Name}}</strong> ({{.principal.Email}}).</p>
+      {{template "logoutForm" .}}
     {{else}}
       <p><a href="/login">Sign in with OIDC</a></p>
     {{end}}

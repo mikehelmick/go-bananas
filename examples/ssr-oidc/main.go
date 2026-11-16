@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -96,6 +97,16 @@ type appConfig struct {
 	// a signed-in user hitting /admin gets a 403.
 	AdminEmails []string `env:"ADMIN_EMAILS"`
 
+	// ServerEndpoint is the canonical base URL (for example
+	// https://app.example.com) exposed to templates as serverEndpoint. Set it
+	// in production. AllowedHosts is the fallback when it is unset: a
+	// comma-separated list of bare hosts the endpoint may be derived from.
+	// With neither, serverEndpoint is empty outside dev mode. Outside dev
+	// mode, AllowedHosts also makes SecureHeaders reject any other Host with
+	// 400, and ServerEndpoint's host pins the HTTPS redirect.
+	ServerEndpoint string   `env:"SERVER_ENDPOINT"`
+	AllowedHosts   []string `env:"ALLOWED_HOSTS"`
+
 	DevMode bool   `env:"DEV_MODE, default=false"`
 	Port    string `env:"PORT, default=8080"`
 	BuildID string `env:"BUILD_ID, default=dev"`
@@ -143,6 +154,11 @@ type app struct {
 	devMode  bool
 	buildID  string
 	oidc     *OIDC // nil when OIDC is not configured
+
+	// serverEndpoint and allowedHosts feed TemplateConfig, so rendered links
+	// never come from a client-chosen Host header.
+	serverEndpoint string
+	allowedHosts   []string
 
 	// admins is the set of email addresses permitted on the /admin route.
 	admins map[string]struct{}
@@ -204,6 +220,9 @@ func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
 		devMode:  devMode,
 		buildID:  cfg.BuildID,
 		admins:   admins,
+
+		serverEndpoint: cfg.ServerEndpoint,
+		allowedHosts:   cfg.AllowedHosts,
 	}
 
 	if cfg.OIDC.Issuer != "" {
@@ -215,6 +234,7 @@ func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
 		a.oidc = oidc
 	}
 
+	a.warnHostPinning(ctx)
 	return a, nil
 }
 
@@ -227,7 +247,8 @@ func (a *app) router() http.Handler {
 	r.Use(middleware.PopulateTraceID())
 	r.Use(middleware.PopulateLogger(logging.DefaultLogger()))
 	r.Use(middleware.LogRequests())
-	r.Use(middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML))
+	secureOpts := a.secureOptions()
+	r.Use(middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML, secureOpts...))
 	r.Use(middleware.ProcessNonce())
 	r.Use(middleware.ContentSecurityPolicy(csp))
 	r.Use(middleware.GzipResponse())
@@ -241,9 +262,11 @@ func (a *app) router() http.Handler {
 	}))
 	r.Use(middleware.HandleCSRF(a.renderer))
 	r.Use(middleware.PopulateTemplateVariables(middleware.TemplateConfig{
-		ServerName: "go-bananas",
-		BuildID:    a.buildID,
-		DevMode:    a.devMode,
+		ServerName:     "go-bananas",
+		ServerEndpoint: a.serverEndpoint,
+		AllowedHosts:   a.allowedHosts,
+		BuildID:        a.buildID,
+		DevMode:        a.devMode,
 	}))
 	r.Use(middleware.InjectCurrentPath())
 	r.Use(middleware.ProcessLocale(a.locales))
@@ -262,7 +285,9 @@ func (a *app) router() http.Handler {
 	r.HandleFunc("/", a.handleHome).Methods(http.MethodGet)
 	r.HandleFunc("/submit", a.handleSubmit).Methods(http.MethodPost)
 	r.HandleFunc("/api/health", a.handleHealth).Methods(http.MethodGet)
-	r.HandleFunc("/logout", a.handleLogout).Methods(http.MethodGet)
+	// Logout changes state, so it is a CSRF-protected POST: a GET link would let
+	// any site sign the user out.
+	r.HandleFunc("/logout", a.handleLogout).Methods(http.MethodPost)
 
 	if a.oidc != nil {
 		r.HandleFunc("/login", a.oidc.Login).Methods(http.MethodGet)
@@ -291,11 +316,66 @@ func (a *app) router() http.Handler {
 	admin.Use(a.requireAdmin)
 	admin.HandleFunc("/admin", a.handleAdmin).Methods(http.MethodGet)
 
-	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	// mux runs r.Use middleware only for a matched route, so the 404 and 405
+	// handlers get the security headers by wrapping them directly.
+	errorHeaders := func(h http.HandlerFunc) http.Handler {
+		return middleware.SecureHeaders(a.devMode, middleware.ServerTypeHTML, secureOpts...)(
+			middleware.ProcessNonce()(middleware.ContentSecurityPolicy(csp)(h)))
+	}
+	r.NotFoundHandler = errorHeaders(func(w http.ResponseWriter, req *http.Request) {
 		response.NotFound(w, req, a.renderer)
 	})
+	r.MethodNotAllowedHandler = errorHeaders(a.handleMethodNotAllowed)
 
 	return r
+}
+
+// secureOptions pins SecureHeaders to the configured hosts outside dev mode: a
+// request whose Host is not in ALLOWED_HOSTS gets 400, and HTTPS redirects go
+// to SERVER_ENDPOINT's host rather than the request's. Dev mode accepts any
+// host.
+func (a *app) secureOptions() []middleware.SecureOption {
+	if a.devMode {
+		return nil
+	}
+	var opts []middleware.SecureOption
+	if len(a.allowedHosts) > 0 {
+		opts = append(opts, middleware.WithAllowedHosts(a.allowedHosts...))
+	}
+	if host := a.sslHost(); host != "" {
+		opts = append(opts, middleware.WithSSLHost(host))
+	}
+	return opts
+}
+
+// sslHost returns SERVER_ENDPOINT's host, or "" when it has none (unset,
+// unparsable, or missing a scheme, as in "app.example.com").
+func (a *app) sslHost() string {
+	u, err := url.Parse(a.serverEndpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+// warnHostPinning logs at startup, outside dev mode, when SecureHeaders gets
+// no host pin from secureOptions, and when SERVER_ENDPOINT has no scheme.
+func (a *app) warnHostPinning(ctx context.Context) {
+	if a.devMode {
+		return
+	}
+	logger := logging.FromContext(ctx)
+	if a.serverEndpoint != "" {
+		if u, err := url.Parse(a.serverEndpoint); err != nil || u.Scheme == "" {
+			logger.Warn("SERVER_ENDPOINT has no scheme, so it cannot pin HTTPS redirects; "+
+				"use a full URL such as https://app.example.com",
+				"serverEndpoint", a.serverEndpoint)
+		}
+	}
+	if len(a.allowedHosts) == 0 && a.sslHost() == "" {
+		logger.Warn("HTTPS redirects are not host-pinned: they go to the request's Host header. " +
+			"Set ALLOWED_HOSTS, or SERVER_ENDPOINT with a scheme and host.")
+	}
 }
 
 // injectPrincipal exposes the current user (if any) to templates as "principal".
@@ -330,9 +410,14 @@ func (a *app) requireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// isAdmin reports whether u is on the configured admin allow-list. A real
-// application would consult its own role or membership store.
+// isAdmin reports whether u is on the configured admin allow-list. The email
+// must be verified by the provider: an unverified address proves nothing about
+// who holds it. A real application would consult its own role or membership
+// store, keyed on the stable subject rather than the email.
 func (a *app) isAdmin(u *User) bool {
+	if !u.EmailVerified {
+		return false
+	}
 	_, ok := a.admins[strings.ToLower(u.Email)]
 	return ok
 }
@@ -412,6 +497,23 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 	response.SeeOther(w, r, "/")
 }
 
+// handleMethodNotAllowed renders a 405 negotiated on Accept, mirroring the
+// response package's error helpers (which have no 405 variant).
+func (a *app) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	const code = http.StatusMethodNotAllowed
+	accept := r.Header.Get("Accept")
+	switch {
+	case strings.Contains(accept, "text/html"):
+		m := webctx.TemplateMapFromContext(r.Context())
+		m.Title("%s", http.StatusText(code))
+		a.renderer.RenderHTMLStatus(w, code, "405", m)
+	case strings.Contains(accept, "application/json"):
+		a.renderer.RenderJSON(w, code, map[string]string{"error": "method not allowed"})
+	default:
+		http.Error(w, http.StatusText(code), code)
+	}
+}
+
 func (a *app) handleLoginUnavailable(w http.ResponseWriter, r *http.Request) {
 	gbsession.Flash(webctx.SessionFromContext(r.Context())).
 		Warning("OIDC sign-in is not configured. Set OIDC_ISSUER to enable it.")
@@ -420,7 +522,7 @@ func (a *app) handleLoginUnavailable(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	resetSession(r) // fixation defense at the login boundary
-	storeUser(r, &User{Subject: "dev|1", Email: "dev@example.com", Name: "Dev User"})
+	storeUser(r, &User{Subject: "dev|1", Email: "dev@example.com", EmailVerified: true, Name: "Dev User"})
 	gbsession.Flash(webctx.SessionFromContext(r.Context())).Alert("Signed in as the dev user.")
 	response.SeeOther(w, r, "/me")
 }

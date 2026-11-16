@@ -15,6 +15,7 @@ h1 { font-size: 2rem; margin-bottom: 0.25rem; }
 .tagline { color: GrayText; margin-top: 0; }
 
 form { display: flex; gap: 0.5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+form.inline { display: inline; margin: 0; }
 label { flex-basis: 100%; font-weight: 600; }
 input[type="text"] { flex: 1; padding: 0.5rem; min-width: 12rem; }
 button { padding: 0.5rem 1rem; cursor: pointer; }
