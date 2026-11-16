@@ -144,7 +144,8 @@ logger := logging.NewLoggerFromConfig(cfg.Logging)
 
 This repo ships [Claude Code](https://claude.com/claude-code) skills that help
 developers and agents build go-bananas apps (scaffolding, the middleware chain,
-authentication, and secrets/keys). Install them via the
+authentication, and secrets/keys) and upgrade them between releases
+(`go-bananas-upgrade`, starting with v1.0.x → v1.1.0). Install them via the
 [plugin marketplace](./.claude-plugin/marketplace.json):
 
 ```
