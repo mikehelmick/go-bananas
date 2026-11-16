@@ -74,7 +74,10 @@ func (kv *KeyVault) GetSecretValue(ctx context.Context, name string) (string, er
 		vaultName, secretName, version = parts[0], parts[1], parts[2]
 	}
 
-	vaultURL := fmt.Sprintf("https://%s.vault.azure.net", vaultName)
+	vaultURL, err := azureauth.VaultURL(vaultName)
+	if err != nil {
+		return "", err
+	}
 	result, err := kv.client.GetSecret(ctx, vaultURL, secretName, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to access secret %v: %w", name, err)
