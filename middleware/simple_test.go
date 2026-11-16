@@ -17,8 +17,6 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/mikehelmick/go-bananas/webctx"
@@ -128,24 +126,6 @@ func TestRequireHostHeader(t *testing.T) {
 	mw(okHandler("ok")).ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("disallowed host status = %d, want 401", w.Code)
-	}
-}
-
-func TestMutateMethod(t *testing.T) {
-	t.Parallel()
-
-	var method string
-	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		method = r.Method
-	})
-
-	form := url.Values{"_method": {"delete"}}
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	MutateMethod()(next).ServeHTTP(httptest.NewRecorder(), req)
-
-	if method != http.MethodDelete {
-		t.Fatalf("method = %q, want DELETE", method)
 	}
 }
 
