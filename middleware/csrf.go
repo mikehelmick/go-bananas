@@ -17,6 +17,7 @@ package middleware
 import (
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -66,7 +67,23 @@ func (e Error) Error() string { return string(e) }
 // ("csrfToken", "csrfField", "csrfMeta", "csrfHeaderField", "csrfMetaTagName"),
 // and, for mutating methods, verifies the incoming token. It must be installed
 // after [RequireSession].
-func HandleCSRF(h *render.Renderer) mux.MiddlewareFunc {
+//
+// GET, HEAD and OPTIONS are treated as safe and skip verification; every other
+// method, including TRACE, needs a token. A token in the [CSRFHeaderField]
+// header is checked without touching the body. Otherwise the token is read from
+// the urlencoded or multipart form: the body is first limited to
+// [DefaultCSRFMaxBodyBytes] (see [WithCSRFMaxBodyBytes]), a form over the limit
+// gets 413 Request Entity Too Large, and the limit stays on the body the
+// handler sees. Multipart temporary files created while parsing are removed
+// when the request finishes.
+func HandleCSRF(h *render.Renderer, opts ...CSRFOption) mux.MiddlewareFunc {
+	cfg := csrfConfig{maxBodyBytes: DefaultCSRFMaxBodyBytes}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -119,7 +136,25 @@ func HandleCSRF(h *render.Renderer) mux.MiddlewareFunc {
 				return
 			}
 
+			// The token must come from the form, so cap the body before parsing
+			// it. Requests carrying the header token are not capped here, so JSON
+			// and streaming bodies are left to the handler.
+			if r.Header.Get(CSRFHeaderField) == "" && r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, cfg.maxBodyBytes)
+			}
+
+			preParsed := r.MultipartForm != nil
 			incomingToken, err := tokenFromRequest(r)
+			// Remove any multipart temp files this middleware created, whatever
+			// the outcome. An earlier parse is left to whoever made it.
+			if !preParsed && r.MultipartForm != nil {
+				form := r.MultipartForm
+				defer func() { _ = form.RemoveAll() }()
+			}
+			if isTooLarge(err) {
+				http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+				return
+			}
 			if err != nil {
 				// Warn but don't fail here; the comparison below returns the correct
 				// response. This is almost always user error with the provided token.
@@ -137,12 +172,16 @@ func HandleCSRF(h *render.Renderer) mux.MiddlewareFunc {
 }
 
 // tokenFromRequest extracts the token from the header, then the form, then the
-// multipart form. It returns [ErrMissingIncomingToken] if absent or
-// [ErrInvalidToken] if present but undecodable.
+// multipart form. It returns [ErrMissingIncomingToken] if absent,
+// [ErrInvalidToken] if present but undecodable, or the [*http.MaxBytesError]
+// if the body exceeds the limit set on r.Body.
 func tokenFromRequest(r *http.Request) ([]byte, error) {
 	str := r.Header.Get(CSRFHeaderField)
 
 	if str == "" {
+		if err := parseCSRFForm(r); err != nil {
+			return nil, err
+		}
 		str = r.PostFormValue(CSRFFormField)
 	}
 
@@ -168,11 +207,36 @@ func tokenFromRequest(r *http.Request) ([]byte, error) {
 	return raw, nil
 }
 
+// csrfMultipartMemory is the in-memory limit passed to ParseMultipartForm. With
+// a body cap at or below it, multipart forms never spill to temporary files;
+// above it, [HandleCSRF] removes the temporary files when the request ends.
+const csrfMultipartMemory = 32 << 20
+
+// parseCSRFForm parses the urlencoded or multipart form. It returns only a
+// [*http.MaxBytesError]; other parse errors are ignored and surface as a
+// missing token. ParseForm runs first because ParseMultipartForm discards its
+// error for non-multipart bodies.
+func parseCSRFForm(r *http.Request) error {
+	if err := r.ParseForm(); isTooLarge(err) {
+		return err
+	}
+	if err := r.ParseMultipartForm(csrfMultipartMemory); isTooLarge(err) {
+		return err
+	}
+	return nil
+}
+
+// isTooLarge reports whether err is, or wraps, an [*http.MaxBytesError].
+func isTooLarge(err error) bool {
+	_, ok := errors.AsType[*http.MaxBytesError](err)
+	return ok
+}
+
 // canSkipCSRFCheck reports whether the request method is safe and does not need
 // CSRF validation.
 func canSkipCSRFCheck(r *http.Request) bool {
 	return r.Method == http.MethodGet || r.Method == http.MethodHead ||
-		r.Method == http.MethodOptions || r.Method == http.MethodTrace
+		r.Method == http.MethodOptions
 }
 
 // mask XORs the raw token with random bytes and prepends those random bytes to
