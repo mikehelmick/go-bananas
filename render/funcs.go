@@ -176,17 +176,14 @@ func humanizeTime(i any) (string, error) {
 // toStringSlice converts the input slice to strings. The values must be
 // primitive or implement [fmt.Stringer].
 func toStringSlice(i any) ([]string, error) {
-	t := reflect.TypeOf(i)
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
-		return nil, fmt.Errorf("value is not a slice: %T", i)
-	}
-
+	// A nil interface or nil pointer yields an invalid Value, which is rejected
+	// below like any other non-slice.
 	s := reflect.ValueOf(i)
 	for s.Kind() == reflect.Pointer {
 		s = s.Elem()
+	}
+	if s.Kind() != reflect.Slice && s.Kind() != reflect.Array {
+		return nil, fmt.Errorf("value is not a slice: %T", i)
 	}
 
 	l := make([]string, 0, s.Len())

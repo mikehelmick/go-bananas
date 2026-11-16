@@ -16,11 +16,14 @@ package render
 
 import (
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"unicode"
 	"unicode/utf8"
 )
@@ -128,6 +131,157 @@ func FuzzToJSON(f *testing.F) {
 		}
 		if got != s {
 			t.Fatalf("round-trip = %q, want %q", got, s)
+		}
+	})
+}
+
+// FuzzRenderHTMLEscaping checks that data rendered through html/template can
+// never introduce a raw '<' into the page.
+func FuzzRenderHTMLEscaping(f *testing.F) {
+	for _, s := range []string{"", "<script>alert(1)</script>", "</p><p>", "&lt;", "<!--", `\x3c`, `<`, "\xff<", "<\x00>", "＜"} {
+		f.Add(s)
+	}
+
+	fsys := fstest.MapFS{
+		"p.html": &fstest.MapFile{Data: []byte(`{{define "p"}}<p>{{.}}</p>{{end}}`)},
+	}
+	r, err := New(fsys, WithLogger(nil))
+	if err != nil {
+		f.Fatalf("New: %v", err)
+	}
+
+	f.Fuzz(func(t *testing.T, s string) {
+		w := httptest.NewRecorder()
+		r.RenderHTML(w, "p", s)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+
+		body := w.Body.String()
+		inner, ok := strings.CutPrefix(body, "<p>")
+		if !ok {
+			t.Fatalf("body %q does not start with <p>", body)
+		}
+		inner, ok = strings.CutSuffix(inner, "</p>")
+		if !ok {
+			t.Fatalf("body %q does not end with </p>", body)
+		}
+		if strings.Contains(inner, "<") {
+			t.Fatalf("data %q produced raw '<' in body %q", s, body)
+		}
+	})
+}
+
+// fuzzSliceInput builds a value of one of the shapes templates commonly pass to
+// the list helpers, chosen by kind. Kinds 0-2 hold exactly a, b and c.
+func fuzzSliceInput(kind uint8, a, b, c string, n int64) any {
+	strs := []string{a, b, c}
+	switch kind % 10 {
+	case 0:
+		return strs
+	case 1:
+		return &strs
+	case 2:
+		return [3]string{a, b, c}
+	case 3:
+		return []int64{n, -n, 0}
+	case 4:
+		return []any{a, n, uint8(n), nil, struct{}{}}
+	case 5:
+		return []string{}
+	case 6:
+		return a // not a slice
+	case 7:
+		return nil
+	case 8:
+		return (*[]string)(nil)
+	default:
+		return []fmt.Stringer{nil}
+	}
+}
+
+// FuzzToStringSlice checks that toStringSlice never panics, and that string
+// slices, pointers to them and string arrays come back unchanged.
+func FuzzToStringSlice(f *testing.F) {
+	for k := range 10 {
+		f.Add(uint8(k), "a", "", "\xff", int64(-1))
+	}
+
+	f.Fuzz(func(t *testing.T, kind uint8, a, b, c string, n int64) {
+		got, err := toStringSlice(fuzzSliceInput(kind, a, b, c, n))
+		if kind%10 > 2 {
+			return
+		}
+		if err != nil {
+			t.Fatalf("toStringSlice: %v", err)
+		}
+		if want := []string{a, b, c}; !slices.Equal(got, want) {
+			t.Fatalf("toStringSlice = %q, want %q", got, want)
+		}
+	})
+}
+
+// FuzzJoinStrings checks that joinStrings never panics or errors, and that the
+// output contains every element and has the expected length.
+func FuzzJoinStrings(f *testing.F) {
+	for k := range 10 {
+		f.Add(uint8(k), "a", "", "\xff", ", ", int64(7))
+	}
+
+	f.Fuzz(func(t *testing.T, kind uint8, a, b, c, sep string, n int64) {
+		in := fuzzSliceInput(kind, a, b, c, n)
+		got, err := joinStrings(in, sep)
+		if err != nil {
+			t.Fatalf("joinStrings: %v", err)
+		}
+		l, err := toStringSlice(in)
+		if err != nil {
+			if got != "" {
+				t.Fatalf("joinStrings(non-slice) = %q, want empty", got)
+			}
+			return
+		}
+		want := 0
+		for _, s := range l {
+			if !strings.Contains(got, s) {
+				t.Fatalf("joinStrings(%q, %q) = %q, missing %q", l, sep, got, s)
+			}
+			want += len(s)
+		}
+		if len(l) > 1 {
+			want += len(sep) * (len(l) - 1)
+		}
+		if len(got) != want {
+			t.Fatalf("len(joinStrings(%q, %q)) = %d, want %d", l, sep, len(got), want)
+		}
+	})
+}
+
+// FuzzToSentence checks that toSentence never panics or errors, that the output
+// contains every element, and that it contains the joiner when there are
+// several.
+func FuzzToSentence(f *testing.F) {
+	for k := range 10 {
+		f.Add(uint8(k), "a", "", "\xff", "and", int64(3))
+	}
+
+	f.Fuzz(func(t *testing.T, kind uint8, a, b, c, joiner string, n int64) {
+		in := fuzzSliceInput(kind, a, b, c, n)
+		got, err := toSentence(in, joiner)
+		if err != nil {
+			t.Fatalf("toSentence: %v", err)
+		}
+		l, err := toStringSlice(in)
+		if err != nil {
+			return
+		}
+		for _, s := range l {
+			if !strings.Contains(got, s) {
+				t.Fatalf("toSentence(%q, %q) = %q, missing %q", l, joiner, got, s)
+			}
+		}
+		if len(l) > 1 && !strings.Contains(got, " "+joiner+" ") && !strings.Contains(got, " "+joiner+", ") {
+			t.Fatalf("toSentence(%q, %q) = %q, missing joiner", l, joiner, got)
 		}
 	})
 }
