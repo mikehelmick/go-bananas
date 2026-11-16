@@ -21,7 +21,7 @@ Gate routes with `RequireAuthenticated`:
 ```go
 me := r.NewRoute().Subrouter()
 me.Use(middleware.RequireAuthenticated(myAuth, h))
-me.HandleFunc("/me", profile)
+me.HandleFunc("/me", profile).Methods(http.MethodGet)
 ```
 
 On success the principal is stored on the context; retrieve it anywhere with
@@ -53,12 +53,31 @@ The plumbing it needs — sessions, CSRF, secure headers, idle expiry — alread
 ships here; the OIDC client itself lives in your application (or, as in the
 example, a separate module). A typical flow:
 
-1. **`/login`** — generate `state` and `nonce`, store them on the session, and
-   redirect to the provider's authorization endpoint
+1. **`GET /login`** — generate `state` and `nonce`, store them on the session,
+   and redirect to the provider's authorization endpoint
    (`oauth2.Config.AuthCodeURL`).
-2. **`/auth/callback`** — validate `state`, exchange the code, verify the ID
-   token and `nonce`, extract claims, and store your user on the session.
-3. **`Authenticate`** reads that user back, as above.
+2. **`GET /auth/callback`** — read `state`, `nonce` (and any PKCE verifier) into
+   locals and **delete them from the session first**, before writing anything.
+   Then compare `state` in constant time (`subtle.ConstantTimeCompare`), handle
+   an OAuth `error` parameter without calling the token endpoint, exchange the
+   code, verify the ID token and `nonce`, and extract claims.
+3. **Reset the session at login** — assign a fresh `session.Values` map before
+   storing your user. This defends against session fixation, rotates the CSRF
+   token, and restarts the `CheckSessionMaxAge` clock.
+4. **`Authenticate`** reads that user back, as above.
+5. **`POST /logout`** — log out with a POST form that carries `{{ .csrfField }}`,
+   routed with `.Methods(http.MethodPost)` behind `HandleCSRF`. A `GET /logout`
+   lets any site sign your users out.
+
+Things to get right:
+
+- **Session writes after the first byte are lost.** `RequireSession` saves the
+  session when the response starts, so deleting flow state in a `defer` (which
+  runs after the response is written) never reaches the cookie, and a failed
+  callback could be retried with the same state.
+- **Only trust verified emails.** If you authorize by email address, require the
+  `email_verified` claim to be the JSON boolean `true`. Better still, key grants
+  on the subject (`sub`).
 
 The runnable
 [`examples/ssr-oidc`](https://github.com/mikehelmick/go-bananas/tree/main/examples/ssr-oidc)

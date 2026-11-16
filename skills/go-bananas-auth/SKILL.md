@@ -21,7 +21,7 @@ type Authenticator interface {
 ```go
 me := r.NewRoute().Subrouter()
 me.Use(middleware.RequireAuthenticated(myAuth, h))
-me.HandleFunc("/me", profile)
+me.HandleFunc("/me", profile).Methods(http.MethodGet)
 ```
 
 On success the principal is stored on the context; read it anywhere with
@@ -72,10 +72,23 @@ already provides the session, CSRF, secure-header, and idle-timeout plumbing.
 
 1. **`GET /login`** — generate `state` + `nonce`, store on the session, redirect
    to `oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce))`.
-2. **`GET /auth/callback`** — verify `state`, exchange the code, verify the ID
-   token via `provider.Verifier(...).Verify`, check `nonce`, extract claims,
-   store your `*User` on the session, redirect.
+2. **`GET /auth/callback`** — read `state`/`nonce`/verifier into locals and
+   **delete them from the session before writing any response** (session writes
+   after the first byte, including in a `defer`, are lost). Compare `state` and
+   `nonce` with `subtle.ConstantTimeCompare` and reject empty values. If the
+   provider sent an `error` parameter, flash and redirect without calling the
+   token endpoint. Then exchange the code, verify the ID token via
+   `provider.Verifier(...).Verify`, extract claims, **reset the session**
+   (assign a fresh `session.Values` map: fixation defense, new CSRF token,
+   restarts `CheckSessionMaxAge`), store your `*User`, redirect.
 3. **`Authenticate`** reads that user back (as above).
+4. **`POST /logout`** — never GET. Route it with `.Methods(http.MethodPost)`
+   behind `HandleCSRF`, and use a form:
+   `<form method="post" action="/logout">{{ .csrfField }}<button>Sign out</button></form>`.
+
+**Authorize on verified identity.** If you grant access by email, require the
+`email_verified` claim to be the JSON boolean `true` (decode into `any` and
+check `v, _ := claims.EmailVerified.(bool)`); better, key grants on `sub`.
 
 The full, working implementation is in
 `github.com/mikehelmick/go-bananas/examples/ssr-oidc/auth.go`. Mirror its

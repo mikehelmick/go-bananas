@@ -7,14 +7,14 @@ Status: approved · Author: Mike Helmick · 2026-11-14
 Every verified finding from the 2026-11 security scan is fixed. Each fix has a
 regression or fuzz test that fails on v1.0.1, and a checked-in native Go fuzz
 suite covers every package that handles untrusted input. All of it ships as
-v1.1.0 with a migration guide, an upgrade skill, and advisories for the two
-exploitable issues.
+v1.1.0 with a migration guide and an upgrade skill, and as v1.0.2 with the
+three exploitable fixes (#1, #2, #27), with advisories for all three.
 
 ## Decisions
 
 | ID | Decision | Door |
 |---|---|---|
-| D1 | No exported signature changes. Secure defaults may change. Ship v1.1.0 with a migration section. | one-way |
+| D1 | No exported signature breaks other than adding trailing variadic options (`SecureHeaders`, `HandleCSRF`, `cookiestore.New`); new exported identifiers are allowed. Secure defaults may change. Ship v1.1.0 with a migration section. | one-way |
 | D2 | `SecureHeaders` stops trusting `X-Forwarded-Host` by default. Apps opt in with a new variadic option. `X-Forwarded-Proto` stays trusted, because distrusting it would loop redirects behind TLS-terminating LBs. | one-way |
 | D3 | Azure: no envelope format, so stored ciphertext is unchanged. Behavior is set in D23. | one-way |
 | D4 | `cookiestore.New` always sets `HttpOnly` and defaults `SameSite` to Lax when unset. `Secure` is set by D21. | one-way |
@@ -22,30 +22,35 @@ exploitable issues.
 | D6 | Superseded by D16. | two-way |
 | D7 | `HandleCSRF` caps the request body before parsing the form, adjustable through a new variadic option `WithCSRFMaxBodyBytes`. The default is set by D22. | one-way |
 | D8 | All low-severity findings get fixed. `toJSON` is fixed, not removed. SECURITY.md is updated for v1. | two-way |
-| D9 | Native `go test -fuzz` targets sit next to the code, with seeds in `testdata/fuzz/`. Seeds replay in normal `go test`. `make fuzz` runs every target. A nightly workflow fuzzes 60s per target and uploads crashers. Each fix lands with a test that fails first. | two-way |
+| D9 | Native `go test -fuzz` targets sit next to the code, with seeds in `testdata/fuzz/`. Seeds replay in normal `go test`. `make fuzz` runs every target. A nightly workflow fuzzes 60s per target; a crash fails the job (no artifacts, D19). Each fix lands with a test that fails first. | two-way |
 | D10 | New `skills/go-bananas-upgrade/` skill analyzes an app for v1.1.0-affected usage and guides the migration. It is structured per version. | two-way |
 | D11 | Nothing is pushed until the work is done. Phases are stacks of local branches, each reviewed before the next is stacked on it. One push at the end, with approval. | two-way |
-| D12 | GitHub security advisories for #1 (CSRF bypass) and #2 (key traversal) are published at the v1.1.0 release. Claude drafts them and the owner publishes. | one-way |
+| D12 | GitHub security advisories for #1 (CSRF bypass), #2 (key traversal) and #27 (split-cookie replay, per D28) are published at the v1.1.0 release. Claude drafts them and the owner publishes. | one-way |
 | D13 | The `go` directive stays at `1.27`. The release notes recommend Go ≥ 1.27.4 for GO-2026-6859. CI pins 1.27.4 and runs `govulncheck`. | two-way |
-| D14 | `MutateMethod` considers only `POST` with `Content-Type: application/x-www-form-urlencoded`, and wraps the body in a 64 KB `MaxBytesReader` before `ParseForm`. Multipart bodies are never parsed by it. | two-way |
+| D14 | `MutateMethod` considers only `POST` with `Content-Type: application/x-www-form-urlencoded`, and reads at most 64 KB of the body. Multipart bodies are never parsed by it. *Changed during the build:* it buffers at most 64 KB+1, parses with `url.ParseQuery`, restores the body and never calls `ParseForm` (see plan Task 1b). | two-way |
 | D15 | `SecureHeaders` adds `WithSSLHost(host)` and `WithAllowedHosts(hosts...)`. `WithTrustedHostHeaders` is documented as requiring `WithAllowedHosts`. The fuzz property becomes "the Location host is in the allowlist". | two-way |
 | D16 | `TemplateConfig` gains `AllowedHosts []string`. Outside dev mode with an empty `ServerEndpoint`, the derived host is used only if it is allowlisted; otherwise it falls back to the first allowed host, or to empty plus the warning. The example sets `ServerEndpoint`. Supersedes D6. | two-way |
 | D17 | Sessions record a created-at time. A new opt-in `CheckSessionMaxAge(maxAge, onExpired)` middleware (modeled on `CheckSessionIdleNoAuth`) enforces an absolute lifetime. The docs say cookie sessions can't be revoked except by rotating keys. | two-way |
-| D18 | `cookiestore.New` copies the options before changing them, treats `SameSiteDefaultMode` as unset, and returns an error if `SameSite=None` without `Secure`. The migration notes call out `form_post`/SAML. | two-way |
+| D18 | `cookiestore.New` copies the options before changing them and treats `SameSiteDefaultMode` as unset. *Changed during the build:* `SameSite=None` forces `Secure` at construction (even with `WithInsecureCookies`), instead of a `Save` error, so `New` keeps returning `*sessions.CookieStore` for callers that type-assert it. Per-session `Options` overrides are not policed (documented). The migration notes call out `form_post`/SAML. | two-way |
 | D19 | `fuzz.yml` uploads no artifacts; a failure only fails the job, and the maintainer reproduces it locally. It sets `permissions: contents: read`, pins actions by SHA, and pins the `govulncheck` version. | two-way |
-| D20 | v1.0.2 is cut from `v1.0.1` with only the #1 and #2 fixes, released the same day as v1.1.0. Go vuln DB reports for `middleware.MutateMethod` and `keys.(*Filesystem).Decrypt` are drafted by Claude and submitted by the owner. | one-way |
+| D20 | v1.0.2 is cut from `v1.0.1` with only the #1, #2 and (per D28) #27 fixes, released the same day as v1.1.0. Go vuln DB reports for `middleware.MutateMethod`, `keys.(*Filesystem).Decrypt` and `middleware.RequireSession`/`RequireNamedSession` are drafted by Claude and submitted by the owner. | one-way |
 | D21 | `cookiestore` always sets `Secure`. A new variadic `cookiestore.New(fn, opts, ...Option)` adds `WithInsecureCookies()` for local HTTP dev. | one-way |
-| D22 | The CSRF body cap defaults to 1 MB and applies only to non-safe methods. Upload routes use a subrouter with their own `HandleCSRF`. | one-way |
+| D22 | The CSRF body cap defaults to 1 MiB and applies only to non-safe methods (as built, only when the token must be read from the body). Upload routes use a subrouter with their own `HandleCSRF`. | one-way |
 | D23 | Azure `Encrypt` errors when `len(aad) > 0`. Azure `Decrypt` logs a warning once and still decrypts, so existing data stays readable. (API 7.0 with RSA-OAEP-256 never supported AAD.) | one-way |
+| D24 | *Added during the build.* Split session cookies are bound to the main session by a private random ID; they are joined only when the ID matches and the session isn't new, and they are expired on logout (`MaxAge < 0`). Unbound v1.0.x split cookies are dropped once. The ID is stored under a plain, reserved string key (`"_gbs_binding"`), which gob encodes without registration, so v1.0.x can still decode v1.1 sessions (rollback stays safe) and no new exported API is needed. | one-way |
+| D25 | *Added during the build.* The stack order is 1a→1b→1c→2a→2b→2c→2d→3a→4a→4d→3b→4b→4c→5a→5b (4a/4d moved ahead of 3b). Each branch is one PR. | two-way |
+| D26 | *Added during the build.* New exported identifiers beyond the plan: `cache.MaxExpireAfter` (100 years, the TTL bound for #12) and `cache.ErrLookupPanicked` (what coalesced waiters get when the owner's lookup panics). | one-way |
+| D27 | *Added during the build.* `secrets.Cacher` runs its shared fetch on a context detached from the caller's cancellation and deadline, with a fixed 30 s timeout, so one cancelled or nearly expired request can't fail coalesced callers. No caller, including the first, can cancel while a fetch is in flight (bounded by 30 s). Providers must not authorize per caller through context values, because the first caller's context is used for the shared result. | one-way |
+| D28 | *Owner decision, 2026-11-15.* The #27 fix (D24's split-cookie binding, minimal port) is backported to v1.0.2, with a third GHSA and vuln DB report. | one-way |
 
 ## Findings in scope
 
 | # | Sev | Finding | Fix |
 |---|---|---|---|
-| 1 | High | `MutateMethod` (`middleware/method.go`) rewrites any method, including POST to GET, from body *or query*. Used via `r.Use` it runs after routing, so the POST handler runs while `HandleCSRF` sees GET and skips validation. | Override only when the original method is POST, the value comes from `PostFormValue`, and the target is in {PUT, PATCH, DELETE}. Document that it must wrap the router. |
+| 1 | High | `MutateMethod` (`middleware/method.go`) rewrites any method, including POST to GET, from body *or query*. Used via `r.Use` it runs after routing, so the POST handler runs while `HandleCSRF` sees GET and skips validation. | Override only when the original method is POST with a urlencoded body, the value comes from the body (not the query), and the target is in {PUT, PATCH, DELETE}. Document that it must wrap the router. As built: see D14. |
 | 2 | Med | `keys.Filesystem.Decrypt` uses the ciphertext's version prefix unvalidated, so `../otherKey/1:` decrypts with another key. | Version must parse with `strconv.ParseUint`. Generated versions are `UnixNano` digits. |
 | 3 | Med | `SecureHeaders` trusts `X-Forwarded-Host` for the HTTPS redirect, so an attacker controls the 301 target and can poison caches. | D2. |
-| 4 | Med | The template `serverEndpoint` comes from the client Host header when unset. | D6. |
+| 4 | Med | The template `serverEndpoint` comes from the client Host header when unset. | D16 (supersedes D6). |
 | 5 | Med | `secrets/vault` defaults `version=1`, so rotation is ignored. | Omit the version parameter when it is not given, so Vault returns the latest. |
 | 6 | Med | Azure KMS silently ignores AAD. | D3. |
 | 7 | Med | `cookiestore.New` sets no HttpOnly/SameSite defaults. | D4. |
@@ -68,6 +73,9 @@ exploitable issues.
 | 24 | Low | The example OIDC callback clears flow state in a `defer`, after the session is already saved. | Clear before writing the response. Document that session writes after the first byte are lost. |
 | 25 | Low | The example admin check trusts an unverified email. | Require `email_verified`. |
 | 26 | Low | HEAD/OPTIONS skip CSRF on routes without `.Methods()`. | Docs and the upgrade skill. |
+| 27 | High | *Found during the build; exists in v1.0.1.* A captured split cookie (`_gbs-<key>`) replayed alone, with no main cookie, is joined into a fresh session, so values stored there (e.g. ID tokens) survive logout and max age. | D24; backported to v1.0.2 (D28). |
+| 28 | Low | *Found by fuzzing.* `toStringSlice` panicked on nil, so `{{joinStrings .missing ", "}}` returned a 500. | A nil value is rejected like any other non-slice. |
+| 29 | Low | *Found by fuzzing.* `RealHostFromRequest` dropped IPv6 brackets. | `net.JoinHostPort`. |
 
 ## Design
 
@@ -83,8 +91,9 @@ in the migration notes. New options:
 
 **MutateMethod (#1).** The signature is unchanged. Rules:
 
-- Only `POST` requests are considered.
-- The value is read via `r.PostFormValue`.
+- Only `POST` requests with an `application/x-www-form-urlencoded` body are considered.
+- The value is read from the body only (as built: at most 64 KB buffered and
+  restored, parsed with `url.ParseQuery`, never `ParseForm`; see D14).
 - The value is uppercased and must be in {PUT, PATCH, DELETE}. Anything else
   is ignored and the method stays POST.
 
@@ -98,12 +107,12 @@ go via `f.Add` plus regression inputs in `testdata/fuzz/Fuzz<Thing>/`.
 `make fuzz` enumerates targets with `go test -list '^Fuzz'` per package and
 runs `go test -run '^$' -fuzz '^<T>$' -fuzztime $(FUZZTIME)` for each.
 `.github/workflows/fuzz.yml` runs nightly and on `workflow_dispatch` with
-`FUZZTIME=60s`, uploading `**/testdata/fuzz/**` as an artifact on failure.
+`FUZZTIME=60s`. A failure only fails the job; no artifacts are uploaded (D19).
 Properties are invariants, not just "no panic":
 
 | Package | Targets (property) |
 |---|---|
-| middleware | `FuzzMutateMethodCSRF` (no handler run for non-safe method without valid token; final method ∈ {orig, PUT, PATCH, DELETE}), `FuzzCSRFToken` (mask/unmask round-trip; arbitrary header/body never panics or validates), `FuzzSecureHeadersRedirect` (Location host ∈ {r.Host}), `FuzzTraceID` (stored ID matches `^[A-Za-z0-9_-]{1,128}$`), `FuzzProcessLocale`, `FuzzRequireHostHeader` (accepts only allowlisted), `FuzzStaticPath`, `FuzzCSP` |
+| middleware | `FuzzMutateMethodCSRF` (no handler run for non-safe method without valid token; final method ∈ {orig, PUT, PATCH, DELETE}), `FuzzCSRFToken` (mask/unmask round-trip; arbitrary header/body never panics or validates), `FuzzSecureHeadersRedirect` (Location host ∈ the allowlist, D15), `FuzzTraceID` (stored ID matches `^[A-Za-z0-9_-]{1,128}$`), `FuzzProcessLocale`, `FuzzRequireHostHeader` (accepts only allowlisted), `FuzzStaticPath`, `FuzzCSP` |
 | keys | `FuzzFilesystemDecrypt` (round-trip; any byte flip or non-digit version rejected; no panic), `FuzzParseECDSAPublicKey`; azure: `FuzzConvert1363ToASN1`, `FuzzParseP256PublicKey` |
 | secrets | `FuzzFilesystemSecretName` (never reads outside root), `FuzzResolver` (non-`secret://` passthrough; `target=file` writes only under SecretsDir), `FuzzJSONExpander`; aws/vault ref parsers after extraction to pure funcs |
 | cookiestore | `FuzzHotCodecDecode` (no panic; tamper/wrong-name rejected; round-trip) |
@@ -157,7 +166,7 @@ All branches are local (D11). Each branch is one reviewable PR in the stack.
      drafts are kept outside the repo).
    - 5a: docs pages + SECURITY.md + existing skill examples.
    - 5b: `go-bananas-upgrade` skill.
-6. **v1.0.2 backport (D20).** Works when: branch `release/v1.0.2` off tag `v1.0.1` carries only the #1 and #2 commits (with D14's urlencoded-only and 64 KB cap) and their tests, and `make test test-examples lint` is green on it.
+6. **v1.0.2 backport (D20).** Works when: branch `release/v1.0.2` off tag `v1.0.1` carries only the #1 and #2 commits (with D14's urlencoded-only and 64 KB cap), the #27 split-cookie binding (D28), and their tests, and `make test test-examples lint` is green on it.
 
 ## Validation
 
@@ -191,7 +200,7 @@ This section records the design-security-reviewer findings (2026-11-14) and how 
 | L5 | `toJSON`: also check `<!--` and U+2028/9. The text-template variant must return `string`. `safeHTML` is a footgun. | Fold into #17; document `safeHTML` |
 | L6 | HEAD/OPTIONS bypass CSRF on routes that don't call `.Methods()`. | Added as finding #26: docs and the upgrade skill |
 | L7 | A variadic parameter changes the func type. | Run `apidiff` in phase 5 and list the result in the release notes |
-| L8 | Unpinned tools and actions. | D19 |
+| L8 | Unpinned tools and actions. | D19, plus every workflow (`ci.yml`, `pages.yml`, `codeql-analysis.yml`) pinned by SHA with `persist-credentials: false` |
 | L9 | Cache coalescing: no cached errors, and a panicking lookup must not hang waiters. | Fold into 2d (own per-key map, no new dependency); fix the stale doc comment |
 | — | D11 means intermediate branches never get remote CI. | Accepted: the gate runs locally on every branch |
 
@@ -203,16 +212,29 @@ This section records the design-security-reviewer findings (2026-11-14) and how 
   notes go in the GitHub release and include a "Migration from v1.0.x"
   section that links the upgrade skill and the docs.
 - **Compatibility:** behavior changes for #1, #2 (malformed ciphertext only),
-  #3, #5, #6, #7, #8, #11, #18. Signatures change only by gaining variadic
-  options on `SecureHeaders` and `HandleCSRF`. Opt-outs: the options above,
+  #3, #4 (`serverEndpoint` is empty outside dev mode unless `ServerEndpoint` or
+  `AllowedHosts` is set), #5, #6/D23 (Azure `Encrypt` with AAD errors), #7/D18
+  (SameSite=None forces Secure), #8, #11, #14, #17 (`toJSON` output), #18, #20
+  (TRACE needs a CSRF token; `response.Back` stricter), D24 (v1.0.x split
+  cookies dropped once), D27 (Cacher fetch detached from cancellation), Vault
+  `SigningKeyVersions` newest first and refs with a scheme/host rejected, Azure
+  signing key IDs as `VAULT/KEY/VERSION`, and cache coalescing semantics. The
+  authoritative list is the upgrade skill (`skills/go-bananas-upgrade`) plus
+  the `apidiff` output. Signatures change only by gaining variadic options on
+  `SecureHeaders`, `HandleCSRF` and `cookiestore.New`. Opt-outs: the options above,
   `ServeHTTP` with a custom `http.Server`, and explicit `sessions.Options`.
   Nothing is deprecated, so there is no removal timeline.
 - **Supported runtimes:** the `go 1.27` directive is unchanged. Go ≥ 1.27.4 is
   recommended (D13). Dependencies were updated in #49.
-- **Downgrade:** no persisted formats change. Filesystem and cloud ciphertext,
-  cookies and secrets are all compatible, so pinning v1.0.x still works (but
-  stays vulnerable).
-- **Disclosure:** v1.0.x is exploitable for #1 and #2. Push, merge, tag and
+- **Downgrade:** ciphertext formats are unchanged, and v1.0.x can decode v1.1
+  session cookies (new values use gob types v1.0.x already knows; D24),
+  including split values: v1.0.x joins split cookies without checking the
+  binding, so after a rollback it is exposed to #27 again. Returning to v1.1
+  drops split values once, because v1.0.x rewrites them without the binding.
+  v1.0.x ignores created-at/max-age tracking. Azure
+  signing key IDs listed under v1.1 (`VAULT/KEY/VERSION`) were never usable
+  under v1.0.x. Pinning v1.0.x still works but stays vulnerable.
+- **Disclosure:** v1.0.x is exploitable for #1, #2 and #27; v1.0.2 fixes all three (D28). Push, merge, tag and
   release v1.0.2 and v1.1.0 in one sitting, then publish the GHSAs (D12) and
   submit the Go vuln DB reports (D20).
 - **Migration callouts:** proxies that rewrite Host (D2); `form_post`/SAML

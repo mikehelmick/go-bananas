@@ -62,10 +62,14 @@ func RequireNamedSession(store sessions.Store, name string, splitValues []any, h
 // out into a separate companion cookie on save and rejoined on load. Each
 // companion cookie is bound to the main session by a random ID and is joined
 // only alongside that session; resetting or deleting the session unbinds or
-// expires it. One split key per router is supported.
+// expires it. One session may split several keys. The companion cookie is
+// named _gbs-<key> without the session name, so two named sessions on the same
+// router must not split the same key.
 //
 // The binding ID is stored in the session values under the string key
-// "_gbs_binding", which is reserved; handlers must not set or remove it.
+// "_gbs_binding", which is reserved; handlers must not set or remove it, and
+// must not copy it into a new session at a login reset (assign a fresh Values
+// map instead).
 //
 // Split cookies written by go-bananas v1.0.x carry no binding and are dropped
 // once after upgrading. A downgrade to v1.0.x keeps split values: v1.0.x joins

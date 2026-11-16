@@ -24,14 +24,27 @@ defer cancel()
 return srv.ServeHTTPHandler(ctx, handler)
 ```
 
-`ServeHTTPHandler` builds an `http.Server` with a sensible
-`ReadHeaderTimeout`. If you need full control (custom timeouts, TLS config, an
-observability wrapper around the handler), build your own `*http.Server` and call
-`ServeHTTP` instead:
+## Timeouts
+
+`ServeHTTPHandler` builds an `http.Server` with connection-level timeouts, so
+slow or idle clients can't hold connections open indefinitely:
+
+| Field | Value | Effect |
+|---|---|---|
+| `ReadHeaderTimeout` | 10 s | Time to read the request headers. |
+| `ReadTimeout` | 5 min | Time to read the whole request, including the body. An upload that takes longer is cut off. |
+| `IdleTimeout` | 120 s | How long a keep-alive connection may sit idle. |
+| `WriteTimeout` | none | Not set, so streaming and long-polling responses keep working. |
+
+If you need different limits (or TLS config, `MaxHeaderBytes`, an observability
+wrapper around the handler), build your own `*http.Server` and call `ServeHTTP`
+instead. Set the timeouts yourself — a zero value means no limit:
 
 ```go
 return srv.ServeHTTP(ctx, &http.Server{
-	ReadHeaderTimeout: 5 * time.Second,
+	ReadHeaderTimeout: 10 * time.Second,
+	ReadTimeout:       30 * time.Minute, // allow slow, large uploads
+	IdleTimeout:       120 * time.Second,
 	Handler:           myWrappedHandler,
 })
 ```

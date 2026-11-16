@@ -24,16 +24,48 @@ if v, ok := c.Lookup("greeting"); ok {
 }
 ```
 
-`WriteThruLookup` computes a missing value and caches it, coalescing concurrent
-callers so the (possibly expensive) lookup runs at most once:
+`New` returns `cache.ErrInvalidDuration` for a negative duration or one longer
+than `cache.MaxExpireAfter` (100 years).
+
+`WriteThruLookup` computes a missing value and caches it:
 
 ```go
 v, err := c.WriteThruLookup("user:42", func() (User, error) {
+	// Don't use one request's ctx here: other callers share this lookup.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), 5*time.Second)
+	defer cancel()
 	return loadUser(ctx, 42)
 })
 ```
 
-It backs the secret-manager cacher (see [Secrets & keys](secrets-and-keys)).
+How it behaves under concurrency:
+
+- **Coalescing is per key.** The first caller for a missing key (the owner) runs
+  its lookup. Other callers for the same key wait and share its result; their
+  own lookup function is not called. The lookup runs without holding the cache
+  lock, so other keys, `Lookup`, `Set` and `Clear` are not blocked by a slow
+  backend.
+- **Errors are shared, not cached.** Whatever error the owner's lookup returns,
+  including a context error, goes to the owner and every waiter. Nothing is
+  stored, so the next call tries again.
+- **Panics.** If the lookup panics, the panic reaches the owner and waiters get
+  `cache.ErrLookupPanicked`.
+- **Don't depend on one caller's context.** Because waiters share the owner's
+  result, a lookup that uses the owner's request context fails every waiter when
+  that request is cancelled. Run it on `context.WithoutCancel(ctx)` plus your own
+  timeout, as above. Waiters block until the owner's lookup returns, so that
+  timeout is also how long they can wait.
+- **`Set` and `Clear` win.** If either runs for a key while its lookup is in
+  flight, the lookup's result is returned to its callers but not stored. After
+  that, a new miss can start a second lookup alongside the first.
+- A lookup must not call `WriteThruLookup` for its own key, or it deadlocks.
+
+It backs the secret-manager cacher, which uses the same detached-context
+pattern. Its shared fetch always has a fixed 30-second timeout and ignores
+every caller's deadline. No caller's context is honored while the fetch runs
+(including the first caller's), and providers must
+not authorize per caller through context values (see
+[Secrets & keys](secrets-and-keys#caching-and-cancellation)).
 
 ## Logging
 

@@ -6,7 +6,8 @@ description: Install go-bananas and stand up a minimal SSR server.
 
 ## Install
 
-go-bananas requires Go 1.27 or newer.
+go-bananas requires Go 1.27 or newer. Build with Go 1.27.4 or later, which
+fixes [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) in `net/http`.
 
 ```sh
 go get github.com/mikehelmick/go-bananas@latest
@@ -50,11 +51,11 @@ func main() {
 		m := webctx.TemplateMapFromContext(req.Context())
 		m.Title("Home")
 		h.RenderHTML(w, "home", m)
-	})
+	}).Methods(http.MethodGet)
 
 	// Serve the embedded static assets the renderer's SRI tags point at.
 	static := middleware.ConfigureStaticAssets(true)
-	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets)))
+	r.PathPrefix("/static/").Handler(static(http.FileServerFS(assets))).Methods(http.MethodGet, http.MethodHead)
 
 	srv, err := server.New("8080")
 	if err != nil {

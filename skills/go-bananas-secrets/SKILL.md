@@ -67,11 +67,34 @@ entropy := func() ([][]byte, error) {
 	if err != nil { return nil, err }
 	return [][]byte{key}, nil
 }
-store := cookiestore.New(entropy, &sessions.Options{Path: "/"})
+var storeOpts []cookiestore.Option
+if devMode {
+	storeOpts = append(storeOpts, cookiestore.WithInsecureCookies()) // plain-HTTP dev only
+}
+store := cookiestore.New(entropy, &sessions.Options{Path: "/"}, storeOpts...)
 ```
 
+`cookiestore.New` always sets `HttpOnly` and `Secure` and defaults `SameSite` to
+Lax; don't set those fields yourself. Pass `WithInsecureCookies()` only in dev
+mode. `SameSite=None` forces `Secure` even then.
+
 Returning multiple keys enables rotation: cookies encode with the first and
-decode against all. See `examples/ssr-oidc/main.go` for an end-to-end example
-that generates and persists the key on first run.
+decode against all. A key that is still returned keeps decoding its cookies, so
+rotation alone revokes nothing. To revoke all sessions, remove every old key from
+what the `EntropyFunc` returns; that is the only way to revoke cookie sessions.
+See `examples/ssr-oidc/main.go` for an end-to-end example that generates and
+persists the key on first run.
+
+## Provider behavior to know (v1.1+)
+
+- **Vault secrets** without `?version=N` read the **latest** version (it was
+  version 1 before v1.1). Pin `?version=1` to keep the old value.
+- **Vault signing** pins `key_version` to the signer's version. Key IDs are
+  `name/N` (`name@N` still parses); versions must be numeric.
+- **Azure Key Vault keys:** `Encrypt` with non-empty AAD returns an error (the
+  service has no AAD); `Decrypt` ignores AAD and logs a warning once. Key IDs are
+  `VAULT/KEY/VERSION`. Vault names must match `^[A-Za-z0-9-]{3,24}$`.
+- **`WrapCacher`** shares one fetch per secret, detached from the caller's
+  cancellation and bounded at 30 s.
 
 Full API: https://pkg.go.dev/github.com/mikehelmick/go-bananas/secrets
