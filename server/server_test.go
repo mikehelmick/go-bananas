@@ -85,3 +85,26 @@ func TestGracefulShutdown(t *testing.T) {
 		t.Fatal("server did not shut down in time")
 	}
 }
+
+func TestNewHTTPServerTimeouts(t *testing.T) {
+	t.Parallel()
+
+	srv := newHTTPServer(http.NotFoundHandler())
+
+	if got, want := srv.ReadHeaderTimeout, 10*time.Second; got != want {
+		t.Errorf("ReadHeaderTimeout = %v, want %v", got, want)
+	}
+	if got, want := srv.ReadTimeout, 5*time.Minute; got != want {
+		t.Errorf("ReadTimeout = %v, want %v", got, want)
+	}
+	if got, want := srv.IdleTimeout, 120*time.Second; got != want {
+		t.Errorf("IdleTimeout = %v, want %v", got, want)
+	}
+	// No WriteTimeout, so streaming responses keep working (D5).
+	if srv.WriteTimeout != 0 {
+		t.Errorf("WriteTimeout = %v, want 0", srv.WriteTimeout)
+	}
+	if srv.Handler == nil {
+		t.Error("Handler is nil")
+	}
+}

@@ -14,7 +14,10 @@
 
 package util
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
 func TestRandomBytes(t *testing.T) {
 	t.Parallel()
@@ -26,6 +29,30 @@ func TestRandomBytes(t *testing.T) {
 	}
 	if got, want := len(b), length; got != want {
 		t.Errorf("random bytes incorrect length. got %d want %d", got, want)
+	}
+}
+
+func TestRandomToken(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{0, 1, 16, 32} {
+		tok, err := RandomToken(n)
+		if err != nil {
+			t.Fatalf("RandomToken(%d): %v", n, err)
+		}
+		b, err := base64.RawURLEncoding.DecodeString(tok)
+		if err != nil {
+			t.Fatalf("RandomToken(%d) = %q is not raw base64url: %v", n, tok, err)
+		}
+		if len(b) != n {
+			t.Errorf("RandomToken(%d) decodes to %d bytes", n, len(b))
+		}
+	}
+
+	a, _ := RandomToken(32)
+	b, _ := RandomToken(32)
+	if a == b {
+		t.Error("two RandomToken(32) calls returned the same token")
 	}
 }
 

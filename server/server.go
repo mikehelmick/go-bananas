@@ -70,14 +70,24 @@ func NewFromListener(listener net.Listener) (*Server, error) {
 }
 
 // ServeHTTPHandler is a convenience wrapper around [Server.ServeHTTP] that builds
-// an [http.Server] from handler with sensible timeouts. Observability or tracing
-// wrappers, if desired, are the caller's responsibility (wrap handler before
-// passing it in).
+// an [http.Server] from handler with sensible timeouts: 10s to read request
+// headers, 5m to read the whole request, and 120s for idle keep-alive
+// connections. There is no write timeout, so streaming responses keep working.
+// For other limits, call [Server.ServeHTTP] with your own [http.Server].
+// Observability or tracing wrappers, if desired, are the caller's
+// responsibility (wrap handler before passing it in).
 func (s *Server) ServeHTTPHandler(ctx context.Context, handler http.Handler) error {
-	return s.ServeHTTP(ctx, &http.Server{
+	return s.ServeHTTP(ctx, newHTTPServer(handler))
+}
+
+// newHTTPServer returns the [http.Server] that [Server.ServeHTTPHandler] uses.
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
-		Handler:           handler,
-	})
+		ReadTimeout:       5 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+		Handler:           h,
+	}
 }
 
 // ServeHTTP starts the server with the provided [http.Server] and blocks until

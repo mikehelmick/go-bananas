@@ -58,6 +58,13 @@ type TemplateConfig struct {
 	// to "https://" plus the first entry. When the list is empty, the endpoint
 	// is "" and a warning is logged once, because a client-chosen Host header
 	// must not end up in rendered links.
+	//
+	// Its semantics differ from [WithAllowedHosts] (for [SecureHeaders]),
+	// which usually lists the same hosts: this field reads r.Host only and
+	// falls back to the first entry instead of rejecting, while
+	// WithAllowedHosts is proxy-aware ([WithTrustedHostHeaders]) and rejects
+	// an unlisted host with 400 Bad Request. Use WithAllowedHosts to reject
+	// spoofed hosts; this field only keeps them out of rendered links.
 	AllowedHosts []string
 
 	// Extra holds any additional application-specific values to expose to every

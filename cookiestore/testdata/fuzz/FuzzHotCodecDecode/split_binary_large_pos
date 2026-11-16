@@ -1,0 +1,4 @@
+go test fuzz v1
+string("_gbs-user")
+string("\x00\xff")
+uint(1048576)

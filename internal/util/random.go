@@ -18,6 +18,7 @@ package util
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 )
 
@@ -29,4 +30,14 @@ func RandomBytes(length int) ([]byte, error) {
 		return nil, fmt.Errorf("failed to generate random: %w", err)
 	}
 	return buf, nil
+}
+
+// RandomToken returns n cryptographically-random bytes encoded with
+// base64.RawURLEncoding, suitable for opaque IDs in cookies and URLs.
+func RandomToken(n int) (string, error) {
+	b, err := RandomBytes(n)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

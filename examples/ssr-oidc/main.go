@@ -167,13 +167,17 @@ func newApp(ctx context.Context, cfg *appConfig) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to set up cookie entropy: %w", err)
 	}
+	// cookiestore always sets HttpOnly and Secure, and defaults SameSite to Lax.
+	// Dev mode serves plain HTTP, so it opts out of Secure; production cookies
+	// stay Secure.
+	var storeOpts []cookiestore.Option
+	if devMode {
+		storeOpts = append(storeOpts, cookiestore.WithInsecureCookies())
+	}
 	store := cookiestore.New(entropy, &sessions.Options{
-		Path:     "/",
-		MaxAge:   3600,
-		HttpOnly: true,
-		Secure:   !devMode,
-		SameSite: http.SameSiteLaxMode,
-	})
+		Path:   "/",
+		MaxAge: 3600,
+	}, storeOpts...)
 
 	// Load the gettext translations; ProcessLocale serves the best match per
 	// request and the templates read it via the "t"/"tDefault" functions.

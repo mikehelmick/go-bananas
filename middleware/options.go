@@ -61,6 +61,12 @@ func WithSSLHost(host string) SecureOption {
 // if set) is not one of hosts, compared case-insensitively, with 400 Bad
 // Request. Entries must match the host exactly, including any port. The check
 // is skipped in dev mode.
+//
+// Its semantics differ from [TemplateConfig.AllowedHosts], which usually lists
+// the same hosts: this option is proxy-aware (it honors
+// [WithTrustedHostHeaders]) and rejects an unlisted host with 400, while
+// TemplateConfig.AllowedHosts reads r.Host only and never rejects; it falls
+// back to the first entry for the rendered endpoint.
 func WithAllowedHosts(hosts ...string) SecureOption {
 	return func(c *secureConfig) {
 		c.opts.AllowedHosts = append([]string(nil), hosts...)

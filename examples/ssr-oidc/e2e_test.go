@@ -249,6 +249,59 @@ func TestHealthJSON(t *testing.T) {
 	}
 }
 
+// TestSessionCookieAttributes checks the store wiring: dev mode serves plain
+// HTTP, so its cookie drops Secure; production cookies are always Secure.
+// Both are HttpOnly and SameSite=Lax.
+func TestSessionCookieAttributes(t *testing.T) {
+	for _, tc := range []struct {
+		devMode string
+		secure  bool
+	}{
+		{devMode: "true", secure: false},
+		{devMode: "false", secure: true},
+	} {
+		t.Run("dev_mode_"+tc.devMode, func(t *testing.T) {
+			t.Setenv("SECRETS_DIR", t.TempDir())
+			t.Setenv("DEV_MODE", tc.devMode)
+			t.Setenv("OIDC_ISSUER", "")
+
+			ctx := context.Background()
+			var cfg appConfig
+			if err := envconfig.Process(ctx, &cfg); err != nil {
+				t.Fatalf("envconfig.Process: %v", err)
+			}
+			a, err := newApp(ctx, &cfg)
+			if err != nil {
+				t.Fatalf("newApp: %v", err)
+			}
+
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			s, err := a.store.New(r, "s")
+			if err != nil {
+				t.Fatalf("store.New: %v", err)
+			}
+			w := httptest.NewRecorder()
+			if err := s.Save(r, w); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			cookies := w.Result().Cookies()
+			if len(cookies) != 1 {
+				t.Fatalf("got %d cookies, want 1", len(cookies))
+			}
+			c := cookies[0]
+			if !c.HttpOnly {
+				t.Error("session cookie is not HttpOnly")
+			}
+			if c.Secure != tc.secure {
+				t.Errorf("Secure = %v, want %v", c.Secure, tc.secure)
+			}
+			if c.SameSite != http.SameSiteLaxMode {
+				t.Errorf("SameSite = %v, want Lax", c.SameSite)
+			}
+		})
+	}
+}
+
 func TestProtectedRouteRequiresAuth(t *testing.T) {
 	srv, client := newTestServer(t)
 
