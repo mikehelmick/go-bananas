@@ -71,9 +71,6 @@ jobs:
 
       - uses: reviewdog/action-setup@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1.5.0
 
-      - name: Install pcregrep
-        run: sudo apt-get -yqq install pcregrep
-
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.4'
